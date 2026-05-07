@@ -1,3 +1,4 @@
+import curses
 import socket
 import threading
 import time
@@ -5,6 +6,7 @@ import requests
 import pyaudio
 
 import engineer  # wires up receiver.on_file_received as a side effect
+import cue_sender
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
 from reaper import BASE
 
@@ -61,7 +63,13 @@ if __name__ == "__main__":
     print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
     print(f"  Reaper         : {BASE} ({'reachable' if reaper_ok else 'NOT REACHABLE'})")
     print(f"  Script         : {ACTION_INSERT_MEDIA}")
+    print(f"  Cue mix sender : UDP → {cue_sender.TARGET_IP}:{cue_sender.PORT}")
     print("Press Ctrl+C to stop.\n")
+
+    cue_thread = threading.Thread(target=curses.wrapper, args=(cue_sender.main,),
+                                  name="cue-sender", daemon=True)
+    cue_thread.start()
+    threads.append(cue_thread)
 
     try:
         while True:
