@@ -4,6 +4,8 @@ from flask import Flask, request
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
 PORT = 5001
 
+on_file_received = None  # optional callback(filename, size) set by the host app
+
 app = Flask(__name__)
 
 
@@ -19,6 +21,8 @@ def upload():
     f.save(dest)
     size = os.path.getsize(dest)
     print(f"Received: {f.filename} ({size} bytes)")
+    if on_file_received:
+        on_file_received(f.filename, size)
     return "OK", 200
 
 
