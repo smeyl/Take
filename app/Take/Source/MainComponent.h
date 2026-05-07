@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "ArtistScreen.h"
 
 //==============================================================================
 class TakeLookAndFeel : public juce::LookAndFeel_V4
@@ -128,14 +129,6 @@ private:
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
     juce::TextButton artistButton, engineerButton;
-};
-
-//==============================================================================
-class ArtistScreen : public juce::Component
-{
-public:
-    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xFF0A0A0B)); }
-    void resized() override {}
 };
 
 //==============================================================================
