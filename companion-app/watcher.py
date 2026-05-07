@@ -5,7 +5,7 @@ from sender import send_file
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".aiff", ".aif", ".flac", ".ogg", ".m4a"}
 WATCH_PATH = os.path.join(os.path.dirname(__file__), "recordings")
-TARGET_IP = "127.0.0.1"  # change this to the receiver's IP address
+TARGET_IP = "192.0.2.10"  # change this to the receiver's IP address
 
 
 class AudioHandler(FileSystemEventHandler):
