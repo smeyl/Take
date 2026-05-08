@@ -392,8 +392,8 @@ public:
         levelMeter.setBounds (28, meterY, getWidth() - 56, kMeterH);
 
         int bottomStack = getHeight() - kStatus;
-        trackWindow.setBounds  (0, bottomStack - kTrack,           getWidth(), kTrack);
-        cueMixPanel.setBounds  (0, bottomStack - kTrack - kCueMix, getWidth(), kCueMix);
+        cueMixPanel.setBounds  (0, bottomStack - kCueMix,           getWidth(), kCueMix);
+        trackWindow.setBounds  (0, bottomStack - kCueMix - kTrack, getWidth(), kTrack);
     }
 
 private:
