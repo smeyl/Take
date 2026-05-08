@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "DetailsPanel.h"
 
 //==============================================================================
 namespace TakeUI
@@ -345,6 +346,13 @@ public:
     {
         setOpaque (true);
 
+        addChildComponent (detailsPanel);
+        detailsPanel.onClose = [this] {
+            detailsVisible = false;
+            detailsPanel.setVisible (false);
+            repaint();
+        };
+
         addAndMakeVisible (recordRing);
         recordRing.onClick = [this]
         {
@@ -394,10 +402,25 @@ public:
         int bottomStack = getHeight() - kStatus;
         cueMixPanel.setBounds  (0, bottomStack - kCueMix,           getWidth(), kCueMix);
         trackWindow.setBounds  (0, bottomStack - kCueMix - kTrack, getWidth(), kTrack);
+
+        detailsPanel.setBounds (getWidth() - 300, 0, 300, getHeight());
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (detailsBtnBounds().contains (e.getPosition()))
+        {
+            detailsVisible = !detailsVisible;
+            detailsPanel.setVisible (detailsVisible);
+            if (detailsVisible) detailsPanel.toFront (false);
+            repaint();
+        }
     }
 
 private:
     //==========================================================================
+    juce::Rectangle<int> detailsBtnBounds() const { return { getWidth() - 56, 9, 44, 26 }; }
+
     void drawHeader (juce::Graphics& g)
     {
         // separator
@@ -409,10 +432,20 @@ private:
         g.setColour (juce::Colour (0xFF1D9E75));
         g.drawText ("TAKE", 16, 0, 60, 44, juce::Justification::centredLeft);
 
+        // Details button
+        {
+            auto db = detailsBtnBounds();
+            g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
+            g.fillRoundedRectangle (db.toFloat(), 4.0f);
+            g.setFont (TakeUI::monoFont (10.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText ("Details", db, juce::Justification::centred);
+        }
+
         // session code
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (sessionCode, getWidth() - 120, 0, 108, 44,
+        g.drawText (sessionCode, getWidth() - 160, 0, 100, 44,
                     juce::Justification::centredRight);
 
         drawConnectionDots (g);
@@ -434,7 +467,7 @@ private:
 
         // centre the cluster in the space between logo and session code
         int left  = 76;
-        int right = getWidth() - 120;
+        int right = getWidth() - 164;
         int x     = left + (right - left - totalW) / 2;
         int dotY  = (44 - kDot) / 2;
 
@@ -480,6 +513,8 @@ private:
                     juce::Justification::centredLeft);
     }
 
+    bool         detailsVisible { false };
+    DetailsPanel detailsPanel;
     juce::String sessionCode { "TAKE-0000" };
     RecordRing   recordRing;
     LevelMeter   levelMeter;

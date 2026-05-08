@@ -1,11 +1,21 @@
 #pragma once
 #include <JuceHeader.h>
+#include "DetailsPanel.h"
 
 //==============================================================================
 class EngineerScreen : public juce::Component
 {
 public:
-    EngineerScreen() { setOpaque (true); }
+    EngineerScreen()
+    {
+        setOpaque (true);
+        addChildComponent (detailsPanel);
+        detailsPanel.onClose = [this] {
+            detailsVisible = false;
+            detailsPanel.setVisible (false);
+            repaint();
+        };
+    }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
     void setRecording   (bool rec, int take = 1)   { isRecording = rec; takeNum = take; repaint(); }
@@ -21,10 +31,22 @@ public:
         drawStatusBar   (g);
     }
 
-    void resized() override {}
+    void resized() override
+    {
+        detailsPanel.setBounds (getWidth() - 300, 0, 300, getHeight());
+    }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
+        if (detailsBtn().contains (e.getPosition()))
+        {
+            detailsVisible = !detailsVisible;
+            detailsPanel.setVisible (detailsVisible);
+            if (detailsVisible) detailsPanel.toFront (false);
+            repaint();
+            return;
+        }
+
         // Left column
         if (e.x < 200)
         {
@@ -116,6 +138,9 @@ private:
     int dragStartY   {  0 };
     int dragStartVal {  0 };
 
+    bool         detailsVisible { false };
+    DetailsPanel detailsPanel;
+
     //==========================================================================
     // Layout
     static constexpr int kRightPanelW      = 180;
@@ -125,6 +150,7 @@ private:
     static constexpr int kBackingQualPillY = 252;
 
     int rightPanelX() const { return getWidth() - kRightPanelW; }
+    juce::Rectangle<int> detailsBtn() const { return { getWidth() - 62, 9, 50, 26 }; }
 
     //==========================================================================
     // Left column — static hit rects
@@ -258,19 +284,29 @@ private:
         g.setColour (juce::Colour (0xFF185FA5));
         g.drawText ("TAKE", 16, 0, 60, 44, juce::Justification::centredLeft);
 
+        // Details button
+        {
+            auto db = detailsBtn();
+            g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
+            g.fillRoundedRectangle (db.toFloat(), 4.0f);
+            g.setFont (TakeUI::monoFont (10.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText ("Details", db, juce::Justification::centred);
+        }
+
         if (isRecording)
         {
             g.setColour (juce::Colour (0xFFFF4F4F));
-            g.fillEllipse ((float) (getWidth() - 90), 19.0f, 6.0f, 6.0f);
+            g.fillEllipse ((float) (getWidth() - 152), 19.0f, 6.0f, 6.0f);
             g.setFont (TakeUI::monoFont (11.0f));
             g.drawText ("REC T" + juce::String (takeNum),
-                        getWidth() - 84, 0, 74, 44, juce::Justification::centredLeft);
+                        getWidth() - 146, 0, 80, 44, juce::Justification::centredLeft);
         }
         else
         {
             g.setFont (TakeUI::monoFont (11.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (sessionCode, getWidth() - 130, 0, 120, 44,
+            g.drawText (sessionCode, getWidth() - 192, 0, 120, 44,
                         juce::Justification::centredRight);
         }
 
@@ -292,7 +328,7 @@ private:
         for (auto& d : dots) totalW += kD + kGap + d.approxW + kBetween;
         totalW -= kBetween;
 
-        int left = 76, right = getWidth() - 120;
+        int left = 76, right = getWidth() - 196;
         int x    = left + (right - left - totalW) / 2;
         int dotY = (44 - kD) / 2;
 
