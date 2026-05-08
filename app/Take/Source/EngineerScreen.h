@@ -17,6 +17,7 @@ public:
         drawHeader      (g);
         drawLeftColumn  (g);
         drawRightColumn (g);
+        drawRightPanel  (g);
         drawStatusBar   (g);
     }
 
@@ -24,42 +25,58 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
+        // Left column
         if (e.x < 200)
         {
             auto p = e.getPosition();
-            if (recBtn().contains (p))            { isRecording = !isRecording; repaint(); return; }
+            if (recBtn().contains (p))           { isRecording = !isRecording; repaint(); return; }
             for (int i = 0; i < 3; ++i)
-                if (syncRow (i).contains (p))     { syncOn[i] = !syncOn[i]; repaint(); return; }
+                if (syncRow (i).contains (p))    { syncOn[i] = !syncOn[i]; repaint(); return; }
             return;
         }
 
-        // Right column — cue mix knobs (hit inside circle)
+        // Right panel
+        if (e.x >= rightPanelX())
+        {
+            for (int i = 0; i < 3; ++i)
+                if (panelPillBounds (i, kStreamPillY).contains (e.getPosition()))
+                    { streamQuality = i; repaint(); return; }
+
+            for (int i = 0; i < 3; ++i)
+                if (panelPillBounds (i, kSyncPillY).contains (e.getPosition()))
+                    { syncFormat = i; repaint(); return; }
+
+            for (int i = 0; i < 3; ++i)
+                if (backingRowBounds (i).contains (e.getPosition()))
+                    { backingTrack[i] = !backingTrack[i]; repaint(); return; }
+
+            for (int i = 0; i < 3; ++i)
+                if (panelPillBounds (i, kBackingQualPillY).contains (e.getPosition()))
+                    { backingQuality = i; repaint(); return; }
+            return;
+        }
+
+        // Cue mix knobs (200 <= x < rightPanelX())
         for (int i = 0; i < 7; ++i)
         {
             auto k = knobCenter (i);
             float dx = e.x - k.cx, dy = e.y - k.cy;
             if (dx * dx + dy * dy <= 16.0f * 16.0f)
-            {
-                dragging = i;  dragStartY = e.y;  dragStartVal = cueMix[i];  return;
-            }
+                { dragging = i; dragStartY = e.y; dragStartVal = cueMix[i]; return; }
         }
 
-        // EQ sliders (expanded hit area ±10px on each side)
+        // EQ sliders
         for (int i = 0; i < 4; ++i)
-        {
             if (eqSliderBounds (i).expanded (10.0f, 0.0f).contains ((float) e.x, (float) e.y))
-            {
-                dragging = 7 + i;  dragStartY = e.y;  dragStartVal = eq[i];  return;
-            }
-        }
+                { dragging = 7 + i; dragStartY = e.y; dragStartVal = eq[i]; return; }
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (dragging < 0) return;
         int val = juce::jlimit (0, 100, dragStartVal + (dragStartY - e.y));
-        if (dragging < 7) cueMix[dragging]     = val;
-        else              eq[dragging - 7]     = val;
+        if (dragging < 7) cueMix[dragging]  = val;
+        else              eq[dragging - 7]  = val;
         repaint();
     }
 
@@ -76,47 +93,83 @@ private:
     // Left column state
     bool syncOn[3] { true, true, false };
 
-    // Right column state
+    // Cue mix state
     int cueMix[7] { 60, 30, 50, 20, 55, 40, 75 };
     int eq[4]     { 50, 50, 60, 65 };
 
-    // Drag state
+    // Right panel state
+    int  streamQuality   { 1 };          // 0=AAC 128, 1=AAC 256, 2=FLAC
+    int  syncFormat      { 1 };          // 0=FLAC,    1=WAV 24,  2=WAV 32f
+    bool backingTrack[3] { true, true, true };
+    int  backingQuality  { 1 };          // 0=MP3 128, 1=MP3 256, 2=WAV
+
+    // Drag state (cue mix / EQ)
     int dragging     { -1 };
     int dragStartY   {  0 };
     int dragStartVal {  0 };
 
     //==========================================================================
-    // Left column — fixed hit rectangles
-    static juce::Rectangle<int> recBtn()           { return juce::Rectangle<int> ( 12, 244, 86, 40); }
-    static juce::Rectangle<int> stopBtn()          { return juce::Rectangle<int> (102, 244, 86, 40); }
-    static juce::Rectangle<int> rtzBtn()           { return juce::Rectangle<int> ( 12, 288, 86, 40); }
-    static juce::Rectangle<int> punchBtn()         { return juce::Rectangle<int> (102, 288, 86, 40); }
-    static juce::Rectangle<int> syncRow (int i)    { return juce::Rectangle<int> (0, 348 + i * 22, 200, 22); }
+    // Layout
+    static constexpr int kRightPanelW      = 180;
+    static constexpr int kStreamPillY      =  70;
+    static constexpr int kSyncPillY        = 122;
+    static constexpr int kBackingRowBase   = 174;
+    static constexpr int kBackingQualPillY = 252;
 
-    // Right column — dynamic layout (depends on getWidth())
+    int rightPanelX() const { return getWidth() - kRightPanelW; }
+
+    //==========================================================================
+    // Left column — static hit rects
+    static juce::Rectangle<int> recBtn()        { return {  12, 244, 86, 40 }; }
+    static juce::Rectangle<int> stopBtn()       { return { 102, 244, 86, 40 }; }
+    static juce::Rectangle<int> rtzBtn()        { return {  12, 288, 86, 40 }; }
+    static juce::Rectangle<int> punchBtn()      { return { 102, 288, 86, 40 }; }
+    static juce::Rectangle<int> syncRow (int i) { return {   0, 348 + i*22, 200, 22 }; }
+
+    // Cue mix — dynamic (depends on getWidth())
     struct KnobPos { float cx, cy; };
 
     KnobPos knobCenter (int index) const
     {
-        float rw = (float) (getWidth() - 200);
-        if (index < 4)                          // row 1 — four knobs
+        float rw = (float) (rightPanelX() - 200);
+        if (index < 4)
         {
             float sw = rw / 4.0f;
             return { 200.0f + sw * index + sw * 0.5f, 94.0f };
         }
-        float sw = rw / 3.0f;                  // row 2 — three knobs
+        float sw = rw / 3.0f;
         return { 200.0f + sw * (index - 4) + sw * 0.5f, 172.0f };
     }
 
     juce::Rectangle<float> eqSliderBounds (int i) const
     {
-        float rw = (float) (getWidth() - 200);
+        float rw = (float) (rightPanelX() - 200);
         float sw = rw / 4.0f;
         float cx = 200.0f + sw * i + sw * 0.5f;
         return { cx - 4.0f, 256.0f, 8.0f, 50.0f };
     }
 
+    // Right panel — hit rects
+    int panelPillW() const { return (kRightPanelW - 20 - 8) / 3; }  // 50px for 3 pills with 4px gaps
+
+    juce::Rectangle<int> panelPillBounds (int col, int y) const
+    {
+        int pw = panelPillW();
+        return { rightPanelX() + 10 + col * (pw + 4), y, pw, 20 };
+    }
+
+    juce::Rectangle<int> backingRowBounds (int i) const
+    {
+        return { rightPanelX() + 10, kBackingRowBase + i * 22, kRightPanelW - 20, 22 };
+    }
+
+    juce::Rectangle<int> sendBtnBounds() const
+    {
+        return { rightPanelX() + 10, 282, kRightPanelW - 20, 28 };
+    }
+
     //==========================================================================
+    // Shared drawing helpers
     void sectionLabel (juce::Graphics& g, const juce::String& text, int y)
     {
         g.setFont (TakeUI::monoFont (9.0f));
@@ -128,6 +181,55 @@ private:
     {
         g.setColour (juce::Colour (0xFF1E1E24));
         g.drawHorizontalLine (y, 0.0f, 200.0f);
+    }
+
+    void rightSectionLabel (juce::Graphics& g, const juce::String& text, int y)
+    {
+        g.setFont (TakeUI::monoFont (9.0f));
+        g.setColour (juce::Colour (0xFF5C5C6E));
+        g.drawText (text, rightPanelX() + 10, y, kRightPanelW - 20, 12,
+                    juce::Justification::centredLeft);
+    }
+
+    void rightDivider (juce::Graphics& g, int y)
+    {
+        g.setColour (juce::Colour (0xFF1E1E24));
+        g.drawHorizontalLine (y, (float) rightPanelX(), (float) getWidth());
+    }
+
+    void drawPills (juce::Graphics& g, int x, int y, int totalW,
+                    const char* const* labels, int count, int selected)
+    {
+        int gap = 4;
+        int pw  = (totalW - (count - 1) * gap) / count;
+        for (int i = 0; i < count; ++i)
+        {
+            auto r   = juce::Rectangle<int> (x + i * (pw + gap), y, pw, 20);
+            bool sel = (i == selected);
+            g.setColour (sel ? juce::Colour (0xFF185FA5) : juce::Colour (0xFF1A1A1E));
+            g.fillRoundedRectangle (r.toFloat(), 4.0f);
+            g.setFont (TakeUI::monoFont (8.0f, sel));
+            g.setColour (sel ? juce::Colour (0xFFF0F0F8) : juce::Colour (0xFF5C5C6E));
+            g.drawText (labels[i], r, juce::Justification::centred);
+        }
+    }
+
+    void drawCheckRow (juce::Graphics& g, int x, int y, const char* label, bool checked)
+    {
+        auto box = juce::Rectangle<int> (x, y + 5, 12, 12);
+        g.setColour (checked ? juce::Colour (0xFF185FA5) : juce::Colour (0xFF2A2A32));
+        g.fillRoundedRectangle (box.toFloat(), 2.0f);
+        if (checked)
+        {
+            g.setColour (juce::Colour (0xFFF0F0F8));
+            float bx = (float) box.getX(), by = (float) box.getY();
+            float bw = (float) box.getWidth(), bh = (float) box.getHeight();
+            g.drawLine (bx + 2.0f,      by + bh * 0.55f, bx + bw * 0.42f, by + bh * 0.85f, 1.5f);
+            g.drawLine (bx + bw * 0.42f, by + bh * 0.85f, bx + bw - 2.0f, by + bh * 0.15f, 1.5f);
+        }
+        g.setFont (TakeUI::monoFont (9.0f));
+        g.setColour (juce::Colour (0xFFC0C0D0));
+        g.drawText (label, x + 18, y, kRightPanelW - 30, 22, juce::Justification::centredLeft);
     }
 
     //==========================================================================
@@ -197,8 +299,8 @@ private:
         g.drawVerticalLine (200, 44.0f, (float) (getHeight() - 28));
 
         sectionLabel (g, "Artist input", 54);
-        drawMeter (g, "L", leftDb,  juce::Rectangle<int> (12, 72,  176, 20));
-        drawMeter (g, "R", rightDb, juce::Rectangle<int> (12, 96,  176, 20));
+        drawMeter (g, "L", leftDb,  { 12, 72,  176, 20 });
+        drawMeter (g, "R", rightDb, { 12, 96,  176, 20 });
 
         divider (g, 118);
         sectionLabel (g, "Takes", 122);
@@ -239,8 +341,8 @@ private:
     void drawTakesPanel (juce::Graphics& g)
     {
         for (int i = 0; i < 3; ++i)
-            drawTakeRow (g, juce::Rectangle<int> (0, 136 + i * 22, 200, 22), i + 1, false);
-        drawTakeRow (g, juce::Rectangle<int> (0, 202, 200, 22), 4, true);
+            drawTakeRow (g, { 0, 136 + i * 22, 200, 22 }, i + 1, false);
+        drawTakeRow (g, { 0, 202, 200, 22 }, 4, true);
     }
 
     void drawTakeRow (juce::Graphics& g, juce::Rectangle<int> row, int num, bool live)
@@ -257,11 +359,11 @@ private:
         g.setColour (numColour);
         g.drawText ("T" + juce::String (num), numCol, juce::Justification::centred);
 
-        float cy   = (float) row.getCentreY();
-        auto waveColour = live ? juce::Colour (0xFFFF4F4F) : juce::Colour (0xFF185FA5);
+        float cy        = (float) row.getCentreY();
+        auto  waveColour = live ? juce::Colour (0xFFFF4F4F) : juce::Colour (0xFF185FA5);
         for (int px = waveCol.getX(); px < waveCol.getRight(); px += 2)
         {
-            float t = (float)(px - waveCol.getX()) / (float) waveCol.getWidth();
+            float t = (float) (px - waveCol.getX()) / (float) waveCol.getWidth();
             if (live && t > 0.60f) break;
             float amp = (std::sin (t * 21.0f + num * 1.3f) * 0.5f
                        + std::cos (t * 13.0f) * 0.3f
@@ -328,7 +430,7 @@ private:
         g.setFont (TakeUI::monoFont (9.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText (juce::String::fromUTF8 ("Cue mix \xe2\x80\x94 artist headphones"),
-                    212, 54, getWidth() - 224, 12, juce::Justification::centredLeft);
+                    212, 54, rightPanelX() - 224, 12, juce::Justification::centredLeft);
 
         drawCueMixKnobs (g);
 
@@ -337,6 +439,10 @@ private:
         g.drawText ("4-band EQ", 212, 222, 120, 12, juce::Justification::centredLeft);
 
         drawEQSection (g);
+
+        // Divider between cue mix and right panel
+        g.setColour (juce::Colour (0xFF1E1E24));
+        g.drawVerticalLine (rightPanelX(), 44.0f, (float) (getHeight() - 28));
     }
 
     void drawCueMixKnobs (juce::Graphics& g)
@@ -417,6 +523,87 @@ private:
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText (label, (int) (b.getCentreX() - 24), (int) (b.getBottom() + 4),
                     48, 10, juce::Justification::centred);
+    }
+
+    //==========================================================================
+    void drawRightPanel (juce::Graphics& g)
+    {
+        int cx = rightPanelX() + 10;
+        int cw = kRightPanelW - 20;
+
+        // STREAM QUALITY -------------------------------------------------------
+        rightSectionLabel (g, "Stream quality", 54);
+        {
+            const char* labels[] = { "AAC 128", "AAC 256", "FLAC" };
+            drawPills (g, cx, kStreamPillY, cw, labels, 3, streamQuality);
+        }
+        rightDivider (g, 100);
+
+        // SYNC FORMAT ----------------------------------------------------------
+        rightSectionLabel (g, "Sync format", 106);
+        {
+            const char* labels[] = { "FLAC", "WAV 24", "WAV 32f" };
+            drawPills (g, cx, kSyncPillY, cw, labels, 3, syncFormat);
+        }
+        rightDivider (g, 152);
+
+        // BACKING TRACK --------------------------------------------------------
+        rightSectionLabel (g, "Backing track", 158);
+        {
+            const char* tracks[] = { "01 - Drums", "02 - Bass", "03 - Keys" };
+            for (int i = 0; i < 3; ++i)
+                drawCheckRow (g, cx, kBackingRowBase + i * 22, tracks[i], backingTrack[i]);
+        }
+        rightDivider (g, 244);
+
+        {
+            const char* labels[] = { "MP3 128", "MP3 256", "WAV" };
+            drawPills (g, cx, kBackingQualPillY, cw, labels, 3, backingQuality);
+        }
+
+        // Send to artist button
+        auto sb = sendBtnBounds();
+        g.setColour (juce::Colour (0xFF185FA5));
+        g.fillRoundedRectangle (sb.toFloat(), 4.0f);
+        g.setFont (TakeUI::monoFont (11.0f, true));
+        g.setColour (juce::Colour (0xFFF0F0F8));
+        g.drawText ("Send to artist", sb, juce::Justification::centred);
+
+        // Status line
+        g.setFont (TakeUI::monoFont (9.0f));
+        g.setColour (juce::Colour (0xFF3DDC84));
+        g.drawText ("Sent - artist confirmed", cx, 316, cw, 14,
+                    juce::Justification::centred);
+
+        rightDivider (g, 338);
+
+        // LAST FILE SWAP -------------------------------------------------------
+        rightSectionLabel (g, "Last file swap", 344);
+
+        auto card = juce::Rectangle<int> (cx, 360, cw, 68);
+        g.setColour (juce::Colour (0xFF18181C));
+        g.fillRoundedRectangle (card.toFloat(), 4.0f);
+        g.setColour (juce::Colour (0xFF1E1E24));
+        g.drawRoundedRectangle (card.toFloat(), 4.0f, 1.0f);
+
+        g.setFont (TakeUI::monoFont (10.0f, true));
+        g.setColour (juce::Colour (0xFFF0F0F8));
+        g.drawText ("T4 - 14:55:58", cx + 8, 368, cw - 16, 14,
+                    juce::Justification::centredLeft);
+
+        g.setFont (TakeUI::monoFont (9.0f));
+        g.setColour (juce::Colour (0xFF5C5C6E));
+        g.drawText ("0.4s - WAV 24", cx + 8, 384, cw - 16, 14,
+                    juce::Justification::centredLeft);
+
+        // Programmatic checkmark + "Timeline updated"
+        g.setColour (juce::Colour (0xFF1D9E75));
+        float ckx = (float) (cx + 8), cky = 400.0f;
+        g.drawLine (ckx,        cky + 5.0f, ckx + 4.0f,  cky + 9.0f, 1.5f);
+        g.drawLine (ckx + 4.0f, cky + 9.0f, ckx + 10.0f, cky + 2.0f, 1.5f);
+        g.setFont (TakeUI::monoFont (9.0f));
+        g.drawText ("Timeline updated", cx + 20, 398, cw - 28, 14,
+                    juce::Justification::centredLeft);
     }
 
     //==========================================================================

@@ -44,4 +44,11 @@ void MainComponent::showScreen (Screen screen)
 
     addAndMakeVisible (*screenComponent);
     resized();
+
+    if (screen == Screen::ENGINEER)
+    {
+        setSize (820, 700);
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+            rw->setContentComponentSize (820, 700);
+    }
 }
