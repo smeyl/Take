@@ -3,12 +3,13 @@
 #include "DetailsPanel.h"
 
 //==============================================================================
-class EngineerScreen : public juce::Component
+class EngineerScreen : public juce::Component, private juce::Timer
 {
 public:
     EngineerScreen()
     {
         setOpaque (true);
+        startTimerHz (8);
         addChildComponent (detailsPanel);
         detailsPanel.onClose = [this] {
             detailsVisible = false;
@@ -113,6 +114,8 @@ public:
     }
 
     void mouseUp (const juce::MouseEvent&) override { dragging = -1; }
+
+    void timerCallback() override { repaint(); }
 
 private:
     // Session / recording state
@@ -226,9 +229,9 @@ private:
     // Shared drawing helpers
     void sectionLabel (juce::Graphics& g, const juce::String& text, int y)
     {
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (text, 12, y, 140, 14, juce::Justification::centredLeft);
+        g.setFont (TakeUI::monoFont (9.5f));
+        g.setColour (juce::Colour (0xFF4A4A5C));
+        g.drawText (text.toUpperCase(), 12, y, 140, 14, juce::Justification::centredLeft);
     }
 
     void divider (juce::Graphics& g, int y)
@@ -239,9 +242,9 @@ private:
 
     void rightSectionLabel (juce::Graphics& g, const juce::String& text, int y)
     {
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (text, rightPanelX() + 10, y, kRightPanelW - 20, 14,
+        g.setFont (TakeUI::monoFont (9.5f));
+        g.setColour (juce::Colour (0xFF4A4A5C));
+        g.drawText (text.toUpperCase(), rightPanelX() + 10, y, kRightPanelW - 20, 14,
                     juce::Justification::centredLeft);
     }
 
@@ -260,7 +263,7 @@ private:
         {
             auto r   = juce::Rectangle<int> (x + i * (pw + gap), y, pw, 20);
             bool sel = (i == selected);
-            g.setColour (sel ? juce::Colour (0xFF185FA5) : juce::Colour (0xFF1A1A1E));
+            g.setColour (sel ? juce::Colour (0xFF185FA5) : juce::Colour (0xFF18181C));
             g.fillRoundedRectangle (r.toFloat(), 4.0f);
             g.setFont (TakeUI::monoFont (8.0f, sel));
             g.setColour (sel ? juce::Colour (0xFFF0F0F8) : juce::Colour (0xFF5C5C6E));
@@ -292,9 +295,16 @@ private:
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        g.setFont (TakeUI::monoFont (15.0f, true));
+        // TAKE wordmark — 18px bold with letter spacing
+        g.setFont (TakeUI::monoFont (18.0f, true));
         g.setColour (juce::Colour (0xFF185FA5));
-        g.drawText ("TAKE", 16, 0, 60, 44, juce::Justification::centredLeft);
+        {
+            const char* const kL[] = { "T", "A", "K", "E", nullptr };
+            constexpr float kSlot = 13.0f, kGap = 3.5f;
+            float lx = 16.0f;
+            for (int i = 0; kL[i]; ++i, lx += kSlot + kGap)
+                g.drawText (kL[i], (int) lx, 0, (int) kSlot + 1, 44, juce::Justification::centredLeft);
+        }
 
         // Details button
         {
@@ -347,7 +357,15 @@ private:
         g.setFont (TakeUI::monoFont (9.0f));
         for (auto& d : dots)
         {
-            g.setColour (d.on ? juce::Colour (0xFF3DDC84) : juce::Colour (0xFF2E2E3A));
+            auto dotColour = d.on ? juce::Colour (0xFF3DDC84) : juce::Colour (0xFF2E2E3A);
+            if (d.on)
+            {
+                g.setColour (dotColour.withAlpha (0.11f));
+                g.fillEllipse ((float)(x - 5), (float)(dotY - 5), (float)(kD + 10), (float)(kD + 10));
+                g.setColour (dotColour.withAlpha (0.24f));
+                g.fillEllipse ((float)(x - 2), (float)(dotY - 2), (float)(kD + 4), (float)(kD + 4));
+            }
+            g.setColour (dotColour);
             g.fillEllipse ((float) x, (float) dotY, (float) kD, (float) kD);
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText (d.label, x + kD + kGap, 0, d.approxW, 44,
@@ -396,16 +414,17 @@ private:
         g.drawText (juce::String (juce::roundToInt (db)) + "dB",
                     b.removeFromRight (40), juce::Justification::centred);
         auto bar = b.reduced (4, 5);
-        g.setColour (juce::Colour (0xFF1A1A1E));
+        g.setColour (juce::Colour (0xFF18181C));
         g.fillRoundedRectangle (bar.toFloat(), 2.0f);
         float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
         if (frac > 0.0f)
         {
             auto fill = bar.toFloat().withWidth (bar.getWidth() * frac);
-            auto col  = juce::Colour (0xFF1D9E75);
-            if (frac > 0.80f) col = juce::Colour (0xFFFFAA00);
-            if (frac > 0.95f) col = juce::Colour (0xFFFF4F4F);
-            g.setColour (col);
+            juce::ColourGradient grad (juce::Colour (0xFF1D9E75), (float) bar.getX(), 0.0f,
+                                       juce::Colour (0xFFFF4F4F), (float) bar.getRight(), 0.0f, false);
+            grad.addColour (0.72, juce::Colour (0xFF1D9E75));
+            grad.addColour (0.88, juce::Colour (0xFFFFAA00));
+            g.setGradientFill (grad);
             g.fillRoundedRectangle (fill, 2.0f);
         }
     }
@@ -445,10 +464,12 @@ private:
                         (float) px, cy + juce::jlimit (0.1f, 1.0f, amp) * 5.0f, 1.0f);
         }
 
-        auto badge = badgeCol.withSizeKeepingCentre (30, 14);
-        g.setColour (numColour.withAlpha (0.15f));
-        g.fillRoundedRectangle (badge.toFloat(), 3.0f);
-        g.setColour (numColour);
+        auto badge   = badgeCol.withSizeKeepingCentre (34, 18);
+        float pulseA = live ? (0.55f + 0.45f * std::sin ((float) juce::Time::getMillisecondCounter() * 0.006f))
+                            : 1.0f;
+        g.setColour (numColour.withAlpha (live ? 0.22f * pulseA : 0.15f));
+        g.fillRoundedRectangle (badge.toFloat(), 9.0f);
+        g.setColour (numColour.withAlpha (live ? pulseA : 1.0f));
         g.setFont (TakeUI::monoFont (10.0f, true));
         g.drawText (live ? "LIVE" : "WAV", badge, juce::Justification::centred);
     }
@@ -457,8 +478,8 @@ private:
     {
         auto recColour = isRecording ? juce::Colour (0xFFFF4F4F) : juce::Colour (0xFF8B2020);
         drawButton (g, recBtn(),   recColour,                 juce::String::fromUTF8 ("\xe2\x97\x8f Rec"));
-        drawButton (g, stopBtn(),  juce::Colour (0xFF1A1A1E), juce::String::fromUTF8 ("\xe2\x96\xa0 Stop"));
-        drawButton (g, rtzBtn(),   juce::Colour (0xFF1A1A1E), juce::String::fromUTF8 ("\xe2\x86\xa9 RTZ"));
+        drawButton (g, stopBtn(),  juce::Colour (0xFF18181C), juce::String::fromUTF8 ("\xe2\x96\xa0 Stop"));
+        drawButton (g, rtzBtn(),   juce::Colour (0xFF18181C), juce::String::fromUTF8 ("\xe2\x86\xa9 RTZ"));
         drawButton (g, punchBtn(), juce::Colour (0xFF5C3A00), juce::String::fromUTF8 ("\xe2\x8a\xa1 Punch"));
     }
 
@@ -512,16 +533,16 @@ private:
     //==========================================================================
     void drawRightColumn (juce::Graphics& g)
     {
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (juce::String::fromUTF8 ("Cue mix \xe2\x80\x94 artist headphones"),
+        g.setFont (TakeUI::monoFont (9.5f));
+        g.setColour (juce::Colour (0xFF4A4A5C));
+        g.drawText ("CUE MIX - ARTIST HEADPHONES",
                     212, 54, rightPanelX() - 224, 14, juce::Justification::centredLeft);
 
         drawCueMixKnobs (g);
 
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("4-band EQ", 212, 222, 120, 14, juce::Justification::centredLeft);
+        g.setFont (TakeUI::monoFont (9.5f));
+        g.setColour (juce::Colour (0xFF4A4A5C));
+        g.drawText ("4-BAND EQ", 212, 222, 120, 14, juce::Justification::centredLeft);
 
         drawEQSection (g);
         drawCueVolSection (g);
@@ -613,9 +634,9 @@ private:
     void drawCueVolSection (juce::Graphics& g)
     {
         // Section label
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("Cue volume", 212, 334, rightPanelX() - 224, 14,
+        g.setFont (TakeUI::monoFont (9.5f));
+        g.setColour (juce::Colour (0xFF4A4A5C));
+        g.drawText ("CUE VOLUME", 212, 334, rightPanelX() - 224, 14,
                     juce::Justification::centredLeft);
 
         // Large knob (r=20, diameter=40)

@@ -29,9 +29,21 @@ class ArtistScreen : public juce::Component
             auto ringColour = isRecording ? juce::Colour (0xFFFF4F4F)
                                           : juce::Colour (0xFF185FA5);
 
-            // subtle outer glow
-            g.setColour (ringColour.withAlpha (0.10f));
-            g.fillEllipse (body.expanded (10.0f));
+            // layered glow — multi-ring emanation, stronger when recording
+            if (isRecording)
+            {
+                g.setColour (ringColour.withAlpha (0.05f));
+                g.fillEllipse (body.expanded (26.0f));
+                g.setColour (ringColour.withAlpha (0.11f));
+                g.fillEllipse (body.expanded (15.0f));
+                g.setColour (ringColour.withAlpha (0.22f));
+                g.fillEllipse (body.expanded (6.0f));
+            }
+            else
+            {
+                g.setColour (ringColour.withAlpha (0.07f));
+                g.fillEllipse (body.expanded (8.0f));
+            }
 
             // circle fill
             g.setColour (juce::Colour (0xFF111113));
@@ -108,17 +120,18 @@ class ArtistScreen : public juce::Component
                                               area.getCentreY() - 3,
                                               area.getWidth(), 6);
 
-            g.setColour (juce::Colour (0xFF1A1A1E));
+            g.setColour (juce::Colour (0xFF18181C));
             g.fillRoundedRectangle (bar.toFloat(), 2.0f);
 
             float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
             if (frac > 0.0f)
             {
                 auto fill = bar.toFloat().withWidth (bar.getWidth() * frac);
-                auto col  = juce::Colour (0xFF1D9E75);
-                if (frac > 0.80f) col = juce::Colour (0xFFFFAA00);
-                if (frac > 0.95f) col = juce::Colour (0xFFFF4F4F);
-                g.setColour (col);
+                juce::ColourGradient grad (juce::Colour (0xFF1D9E75), (float) bar.getX(), 0.0f,
+                                           juce::Colour (0xFFFF4F4F), (float) bar.getRight(), 0.0f, false);
+                grad.addColour (0.72, juce::Colour (0xFF1D9E75));
+                grad.addColour (0.88, juce::Colour (0xFFFFAA00));
+                g.setGradientFill (grad);
                 g.fillRoundedRectangle (fill, 2.0f);
             }
         }
@@ -443,10 +456,16 @@ private:
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        // TAKE logo — x=12, fixed 60px, never overlaps anything
-        g.setFont (TakeUI::monoFont (15.0f, true));
+        // TAKE wordmark — 16px bold with subtle letter spacing
+        g.setFont (TakeUI::monoFont (16.0f, true));
         g.setColour (juce::Colour (0xFF1D9E75));
-        g.drawText ("TAKE", 12, 0, 60, 44, juce::Justification::centredLeft);
+        {
+            const char* const kL[] = { "T", "A", "K", "E", nullptr };
+            constexpr float kSlot = 11.0f, kGap = 1.5f;
+            float lx = 12.0f;
+            for (int i = 0; kL[i]; ++i, lx += kSlot + kGap)
+                g.drawText (kL[i], (int) lx, 0, (int) kSlot + 1, 44, juce::Justification::centredLeft);
+        }
 
         // Details button — right-aligned at getWidth()-10
         {
@@ -491,7 +510,15 @@ private:
 
         for (auto& d : dots)
         {
-            g.setColour (d.on ? juce::Colour (0xFF3DDC84) : juce::Colour (0xFF2E2E3A));
+            auto dotColour = d.on ? juce::Colour (0xFF3DDC84) : juce::Colour (0xFF2E2E3A);
+            if (d.on)
+            {
+                g.setColour (dotColour.withAlpha (0.11f));
+                g.fillEllipse ((float)(x - 5), (float)(dotY - 5), (float)(kDot + 10), (float)(kDot + 10));
+                g.setColour (dotColour.withAlpha (0.24f));
+                g.fillEllipse ((float)(x - 2), (float)(dotY - 2), (float)(kDot + 4), (float)(kDot + 4));
+            }
+            g.setColour (dotColour);
             g.fillEllipse ((float) x, (float) dotY, (float) kDot, (float) kDot);
 
             g.setColour (juce::Colour (0xFF5C5C6E));
