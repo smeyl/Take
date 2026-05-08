@@ -350,6 +350,7 @@ public:
         detailsPanel.onClose = [this] {
             detailsVisible = false;
             detailsPanel.setVisible (false);
+            applyWindowSize (false);
             repaint();
         };
 
@@ -390,36 +391,51 @@ public:
         constexpr int kMeterH   = 56, kMeterGap = 12;
         constexpr int kBlock    = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
 
+        int cw     = contentWidth();
         int usable = getHeight() - kHeader - kStatus - kTrack - kCueMix;
         int top    = kHeader + juce::jmax (8, (usable - kBlock) / 2);
-        int cx     = (getWidth() - kRing) / 2;
+        int cx     = (cw - kRing) / 2;
 
         recordRing.setBounds (cx, top, kRing, kRing);
 
         int meterY = top + kRing + kLabelGap + kLabelH + kMeterGap;
-        levelMeter.setBounds (28, meterY, getWidth() - 56, kMeterH);
+        levelMeter.setBounds (28, meterY, cw - 56, kMeterH);
 
         int bottomStack = getHeight() - kStatus;
-        cueMixPanel.setBounds  (0, bottomStack - kCueMix,           getWidth(), kCueMix);
-        trackWindow.setBounds  (0, bottomStack - kCueMix - kTrack, getWidth(), kTrack);
+        cueMixPanel.setBounds  (0, bottomStack - kCueMix,          cw, kCueMix);
+        trackWindow.setBounds  (0, bottomStack - kCueMix - kTrack, cw, kTrack);
 
-        detailsPanel.setBounds (getWidth() - 300, 0, 300, getHeight());
+        detailsPanel.setBounds (kBaseWidth, 0, 300, getHeight());
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (detailsBtnBounds().contains (e.getPosition()))
+        // Expand hit area slightly for the small Details button
+        if (detailsBtnBounds().expanded (4).contains (e.getPosition()))
         {
             detailsVisible = !detailsVisible;
             detailsPanel.setVisible (detailsVisible);
             if (detailsVisible) detailsPanel.toFront (false);
+            applyWindowSize (detailsVisible);
             repaint();
         }
     }
 
 private:
     //==========================================================================
-    juce::Rectangle<int> detailsBtnBounds() const { return { getWidth() - 56, 9, 44, 26 }; }
+    static constexpr int kBaseWidth  = 400;
+    static constexpr int kBaseHeight = 500;
+
+    int contentWidth() const { return juce::jmin (getWidth(), kBaseWidth); }
+
+    void applyWindowSize (bool withPanel)
+    {
+        int w = kBaseWidth + (withPanel ? 300 : 0);
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+            rw->setContentComponentSize (w, kBaseHeight);
+    }
+
+    juce::Rectangle<int> detailsBtnBounds() const { return { contentWidth() - 54, 9, 44, 26 }; }
 
     void drawHeader (juce::Graphics& g)
     {
@@ -427,12 +443,12 @@ private:
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        // TAKE logo
+        // TAKE logo — x=12, fixed 60px, never overlaps anything
         g.setFont (TakeUI::monoFont (15.0f, true));
         g.setColour (juce::Colour (0xFF1D9E75));
-        g.drawText ("TAKE", 16, 0, 60, 44, juce::Justification::centredLeft);
+        g.drawText ("TAKE", 12, 0, 60, 44, juce::Justification::centredLeft);
 
-        // Details button
+        // Details button — right-aligned at getWidth()-10
         {
             auto db = detailsBtnBounds();
             g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
@@ -442,10 +458,10 @@ private:
             g.drawText ("Details", db, juce::Justification::centred);
         }
 
-        // session code
+        // Session code — right-aligned at getWidth()-70 (left of Details button)
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (sessionCode, getWidth() - 160, 0, 100, 44,
+        g.drawText (sessionCode, contentWidth() - 170, 0, 100, 44,
                     juce::Justification::centredRight);
 
         drawConnectionDots (g);
@@ -465,9 +481,9 @@ private:
         for (auto& d : dots) totalW += kDot + kGap + d.approxW + kBetween;
         totalW -= kBetween;
 
-        // centre the cluster in the space between logo and session code
-        int left  = 76;
-        int right = getWidth() - 164;
+        // centre the cluster between x=80 and getWidth()-140
+        int left  = 80;
+        int right = contentWidth() - 140;
         int x     = left + (right - left - totalW) / 2;
         int dotY  = (44 - kDot) / 2;
 
@@ -492,7 +508,7 @@ private:
         g.setFont (TakeUI::monoFont (12.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText ("T" + juce::String (recordRing.takeNumber),
-                    0, y, getWidth(), 20, juce::Justification::centred);
+                    0, y, contentWidth(), 20, juce::Justification::centred);
     }
 
     void drawStatusBar (juce::Graphics& g)
@@ -509,7 +525,7 @@ private:
         auto text = juce::String ("Latency 0ms  |  Take T")
                     + juce::String (recordRing.takeNumber)
                     + "  |  Stream AAC 256";
-        g.drawText (text, 16, barY, getWidth() - 32, 32,
+        g.drawText (text, 16, barY, contentWidth() - 32, 32,
                     juce::Justification::centredLeft);
     }
 

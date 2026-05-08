@@ -13,6 +13,7 @@ public:
         detailsPanel.onClose = [this] {
             detailsVisible = false;
             detailsPanel.setVisible (false);
+            applyWindowSize (false);
             repaint();
         };
     }
@@ -33,7 +34,7 @@ public:
 
     void resized() override
     {
-        detailsPanel.setBounds (getWidth() - 300, 0, 300, getHeight());
+        detailsPanel.setBounds (kBaseWidth, 0, 300, getHeight());
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -43,6 +44,7 @@ public:
             detailsVisible = !detailsVisible;
             detailsPanel.setVisible (detailsVisible);
             if (detailsVisible) detailsPanel.toFront (false);
+            applyWindowSize (detailsVisible);
             repaint();
             return;
         }
@@ -143,23 +145,26 @@ private:
 
     //==========================================================================
     // Layout
+    static constexpr int kBaseWidth        = 820;
+    static constexpr int kBaseHeight       = 700;
     static constexpr int kRightPanelW      = 180;
     static constexpr int kStreamPillY      =  70;
     static constexpr int kSyncPillY        = 122;
     static constexpr int kBackingRowBase   = 174;
     static constexpr int kBackingQualPillY = 252;
 
-    int rightPanelX() const { return getWidth() - kRightPanelW; }
-    juce::Rectangle<int> detailsBtn() const { return { getWidth() - 62, 9, 50, 26 }; }
+    int contentWidth() const { return juce::jmin (getWidth(), kBaseWidth); }
+    int rightPanelX()  const { return contentWidth() - kRightPanelW; }
+    juce::Rectangle<int> detailsBtn() const { return { contentWidth() - 62, 9, 50, 26 }; }
 
     //==========================================================================
     // Left column — static hit rects
-    static juce::Rectangle<int> recBtn()        { return {  12, 318, 86, 40 }; }
-    static juce::Rectangle<int> stopBtn()       { return { 102, 318, 86, 40 }; }
-    static juce::Rectangle<int> rtzBtn()        { return {  12, 368, 86, 40 }; }
-    static juce::Rectangle<int> punchBtn()      { return { 102, 368, 86, 40 }; }
-    static juce::Rectangle<int> syncRow (int i) { return {   0, 462 + i*22, 200, 22 }; }
-    static juce::Rectangle<int> syncNowBtn()    { return {  12, 546, 176, 36 }; }
+    static juce::Rectangle<int> recBtn()        { return {  12, 318, 86, 52 }; }
+    static juce::Rectangle<int> stopBtn()       { return { 102, 318, 86, 52 }; }
+    static juce::Rectangle<int> rtzBtn()        { return {  12, 378, 86, 52 }; }
+    static juce::Rectangle<int> punchBtn()      { return { 102, 378, 86, 52 }; }
+    static juce::Rectangle<int> syncRow (int i) { return {   0, 484 + i*22, 200, 22 }; }
+    static juce::Rectangle<int> syncNowBtn()    { return {  12, 568, 176, 36 }; }
 
 
     // Cue mix — dynamic (depends on getWidth())
@@ -210,13 +215,20 @@ private:
         return { rightPanelX() + 10, 282, kRightPanelW - 20, 28 };
     }
 
+    void applyWindowSize (bool withPanel)
+    {
+        int w = kBaseWidth + (withPanel ? 300 : 0);
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+            rw->setContentComponentSize (w, kBaseHeight);
+    }
+
     //==========================================================================
     // Shared drawing helpers
     void sectionLabel (juce::Graphics& g, const juce::String& text, int y)
     {
-        g.setFont (TakeUI::monoFont (9.0f));
+        g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (text, 12, y, 140, 12, juce::Justification::centredLeft);
+        g.drawText (text, 12, y, 140, 14, juce::Justification::centredLeft);
     }
 
     void divider (juce::Graphics& g, int y)
@@ -227,9 +239,9 @@ private:
 
     void rightSectionLabel (juce::Graphics& g, const juce::String& text, int y)
     {
-        g.setFont (TakeUI::monoFont (9.0f));
+        g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (text, rightPanelX() + 10, y, kRightPanelW - 20, 12,
+        g.drawText (text, rightPanelX() + 10, y, kRightPanelW - 20, 14,
                     juce::Justification::centredLeft);
     }
 
@@ -297,16 +309,16 @@ private:
         if (isRecording)
         {
             g.setColour (juce::Colour (0xFFFF4F4F));
-            g.fillEllipse ((float) (getWidth() - 152), 19.0f, 6.0f, 6.0f);
+            g.fillEllipse ((float) (contentWidth() - 152), 19.0f, 6.0f, 6.0f);
             g.setFont (TakeUI::monoFont (11.0f));
             g.drawText ("REC T" + juce::String (takeNum),
-                        getWidth() - 146, 0, 80, 44, juce::Justification::centredLeft);
+                        contentWidth() - 146, 0, 80, 44, juce::Justification::centredLeft);
         }
         else
         {
             g.setFont (TakeUI::monoFont (11.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (sessionCode, getWidth() - 192, 0, 120, 44,
+            g.drawText (sessionCode, contentWidth() - 192, 0, 120, 44,
                         juce::Justification::centredRight);
         }
 
@@ -328,7 +340,7 @@ private:
         for (auto& d : dots) totalW += kD + kGap + d.approxW + kBetween;
         totalW -= kBetween;
 
-        int left = 76, right = getWidth() - 196;
+        int left = 76, right = contentWidth() - 196;
         int x    = left + (right - left - totalW) / 2;
         int dotY = (44 - kD) / 2;
 
@@ -362,17 +374,17 @@ private:
         sectionLabel (g, "Transport", 304);
         drawTransport (g);
 
-        divider (g, 426);
-        sectionLabel (g, "Sync", 448);
+        divider (g, 448);
+        sectionLabel (g, "Sync", 470);
         drawSyncSettings (g);
         drawSyncNowBtn (g);
 
-        divider (g, 600);
+        divider (g, 622);
         const char* const fmtNames[] = { "FLAC", "WAV 24", "WAV 32f" };
         g.setFont (TakeUI::monoFont (9.0f));
         g.setColour (juce::Colour (0xFF3A3A48));
         g.drawText (juce::String ("Format: ") + fmtNames[syncFormat],
-                    12, 614, 176, 14, juce::Justification::centredLeft);
+                    12, 636, 176, 14, juce::Justification::centredLeft);
     }
 
     void drawMeter (juce::Graphics& g, const juce::String& ch,
@@ -415,7 +427,7 @@ private:
         auto waveCol  = juce::Rectangle<int> ( 28, row.getY(), 130, row.getHeight());
 
         auto numColour = live ? juce::Colour (0xFFFF4F4F) : juce::Colour (0xFF1D9E75);
-        g.setFont (TakeUI::monoFont (10.0f, true));
+        g.setFont (TakeUI::monoFont (12.0f, true));
         g.setColour (numColour);
         g.drawText ("T" + juce::String (num), numCol, juce::Justification::centred);
 
@@ -437,7 +449,7 @@ private:
         g.setColour (numColour.withAlpha (0.15f));
         g.fillRoundedRectangle (badge.toFloat(), 3.0f);
         g.setColour (numColour);
-        g.setFont (TakeUI::monoFont (8.0f, true));
+        g.setFont (TakeUI::monoFont (10.0f, true));
         g.drawText (live ? "LIVE" : "WAV", badge, juce::Justification::centred);
     }
 
@@ -455,7 +467,7 @@ private:
     {
         g.setColour (bg);
         g.fillRoundedRectangle (b.toFloat(), 4.0f);
-        g.setFont (TakeUI::monoFont (11.0f));
+        g.setFont (TakeUI::monoFont (13.0f, true));
         g.setColour (juce::Colour (0xFFF0F0F8));
         g.drawText (label, b, juce::Justification::centred);
     }
@@ -466,7 +478,7 @@ private:
         for (int i = 0; i < 3; ++i)
         {
             auto row = syncRow (i);
-            g.setFont (TakeUI::monoFont (9.0f));
+            g.setFont (TakeUI::monoFont (12.0f));
             g.setColour (juce::Colour (0xFFC0C0D0));
             g.drawText (labels[i], row.getX() + 12, row.getY(), 130, row.getHeight(),
                         juce::Justification::centredLeft);
@@ -491,7 +503,7 @@ private:
         g.fillRoundedRectangle (b.toFloat(), 4.0f);
         g.setColour (juce::Colour (0xFF185FA5));
         g.drawRoundedRectangle (b.toFloat().reduced (0.5f), 4.0f, 1.0f);
-        g.setFont (TakeUI::monoFont (11.0f));
+        g.setFont (TakeUI::monoFont (12.0f));
         g.drawText (juce::String::fromUTF8 ("Sync now \xe2\x80\x94 T4"),
                     b, juce::Justification::centred);
     }
@@ -500,16 +512,16 @@ private:
     //==========================================================================
     void drawRightColumn (juce::Graphics& g)
     {
-        g.setFont (TakeUI::monoFont (9.0f));
+        g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText (juce::String::fromUTF8 ("Cue mix \xe2\x80\x94 artist headphones"),
-                    212, 54, rightPanelX() - 224, 12, juce::Justification::centredLeft);
+                    212, 54, rightPanelX() - 224, 14, juce::Justification::centredLeft);
 
         drawCueMixKnobs (g);
 
-        g.setFont (TakeUI::monoFont (9.0f));
+        g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("4-band EQ", 212, 222, 120, 12, juce::Justification::centredLeft);
+        g.drawText ("4-band EQ", 212, 222, 120, 14, juce::Justification::centredLeft);
 
         drawEQSection (g);
         drawCueVolSection (g);
@@ -601,9 +613,9 @@ private:
     void drawCueVolSection (juce::Graphics& g)
     {
         // Section label
-        g.setFont (TakeUI::monoFont (9.0f));
+        g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("Cue volume", 212, 334, rightPanelX() - 224, 12,
+        g.drawText ("Cue volume", 212, 334, rightPanelX() - 224, 14,
                     juce::Justification::centredLeft);
 
         // Large knob (r=20, diameter=40)
@@ -737,7 +749,7 @@ private:
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText ("Latency 0ms  |  BW 0 kbps  |  WAV 48k  |  Takes 3  |  Last T3",
-                    16, barY, getWidth() - 32, 28, juce::Justification::centredLeft);
+                    16, barY, contentWidth() - 32, 28, juce::Justification::centredLeft);
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EngineerScreen)
