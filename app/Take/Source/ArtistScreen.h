@@ -123,6 +123,144 @@ class ArtistScreen : public juce::Component
         }
     };
 
+    //==========================================================================
+    class TrackWindow : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            constexpr int kSectH = 24, kWaveH = 48;
+            auto b = getLocalBounds();
+            drawSections (g, b.removeFromTop (kSectH));
+            drawWaveform (g, b.removeFromTop (kWaveH));
+            drawRuler    (g, b);
+        }
+
+        void resized() override {}
+
+    private:
+        void drawSections (juce::Graphics& g, juce::Rectangle<int> b)
+        {
+            struct Sec { const char* name; bool current; };
+            const Sec secs[] = {
+                { "Verse 1", false },
+                { "Chorus",  true  },
+                { "Verse 2", false },
+            };
+
+            int sw = b.getWidth() / 3;
+
+            for (int i = 0; i < 3; ++i)
+            {
+                int secX = b.getX() + i * sw;
+                int secW = (i == 2) ? (b.getWidth() - 2 * sw) : sw;
+                auto r   = juce::Rectangle<int> (secX, b.getY(), secW, b.getHeight());
+
+                g.setColour (juce::Colour (0xFF18181C));
+                g.fillRect (r);
+
+                if (secs[i].current)
+                {
+                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.10f));
+                    g.fillRect (r);
+                }
+
+                if (i > 0)
+                {
+                    g.setColour (juce::Colour (0xFF1E1E24));
+                    g.drawVerticalLine (secX, (float) b.getY(), (float) b.getBottom());
+                }
+
+                g.setFont (TakeUI::monoFont (10.0f));
+                g.setColour (secs[i].current ? juce::Colour (0xFF4F8FFF)
+                                             : juce::Colour (0xFF5C5C6E));
+                g.drawText (secs[i].name, r, juce::Justification::centred);
+            }
+
+            g.setColour (juce::Colour (0xFF1E1E24));
+            g.drawHorizontalLine (b.getBottom() - 1, (float) b.getX(), (float) b.getRight());
+        }
+
+        void drawWaveform (juce::Graphics& g, juce::Rectangle<int> b)
+        {
+            g.setColour (juce::Colour (0xFF0D0D0F));
+            g.fillRect (b);
+
+            float bx   = (float) b.getX();
+            float bw   = (float) b.getWidth();
+            float cy   = (float) b.getCentreY();
+            float maxH = b.getHeight() * 0.40f;
+
+            // punch zone: 20 %–50 % of width, red tint
+            float punchX1 = bx + bw * 0.20f;
+            float punchX2 = bx + bw * 0.50f;
+            g.setColour (juce::Colour (0xFFFF4F4F).withAlpha (0.10f));
+            g.fillRect (punchX1, (float) b.getY(), punchX2 - punchX1, (float) b.getHeight());
+
+            // waveform bars — deterministic trig, no random state needed
+            for (int px = b.getX(); px < b.getRight(); px += 3)
+            {
+                float t   = (float)(px - b.getX()) / bw;
+                float amp = (std::sin (t * 23.4f) * 0.5f
+                           + std::cos (t * 11.7f) * 0.3f
+                           + std::sin (t * 47.1f) * 0.2f) * 0.5f + 0.5f;
+                amp = juce::jlimit (0.05f, 1.0f, amp);
+                float hh = amp * maxH;
+
+                bool inPunch = ((float) px >= punchX1 && (float) px < punchX2);
+                g.setColour (inPunch ? juce::Colour (0xFF4A4A5E) : juce::Colour (0xFF353542));
+                g.drawLine ((float) px, cy - hh, (float) px, cy + hh, 1.0f);
+            }
+
+            // playhead at 45 %
+            float phX = bx + bw * 0.45f;
+            g.setColour (juce::Colour (0xFF4F8FFF));
+            g.drawLine (phX, (float) b.getY(), phX, (float) b.getBottom(), 1.5f);
+
+            g.setColour (juce::Colour (0xFF1E1E24));
+            g.drawHorizontalLine (b.getY(), bx, bx + bw);
+        }
+
+        void drawRuler (juce::Graphics& g, juce::Rectangle<int> b)
+        {
+            g.setColour (juce::Colour (0xFF0D0D0F));
+            g.fillRect (b);
+
+            g.setFont (TakeUI::monoFont (9.0f));
+            const char* labels[] = { "0:00", "0:16", "0:32", "0:48", "1:04" };
+
+            for (int i = 0; i <= 4; ++i)
+            {
+                float frac = i / 4.0f;
+                int   tx   = b.getX() + (int) (b.getWidth() * frac);
+
+                g.setColour (juce::Colour (0xFF3A3A48));
+                g.drawLine ((float) tx, (float) b.getY(),
+                            (float) tx, (float) (b.getY() + 4), 1.0f);
+
+                // three minor ticks between each pair of majors
+                if (i < 4)
+                {
+                    for (int m = 1; m <= 3; ++m)
+                    {
+                        float mf = frac + (m / 4.0f) * 0.25f;
+                        int   mx = b.getX() + (int) (b.getWidth() * mf);
+                        g.setColour (juce::Colour (0xFF252530));
+                        g.drawLine ((float) mx, (float) b.getY(),
+                                    (float) mx, (float) (b.getY() + 2), 1.0f);
+                    }
+                }
+
+                g.setColour (juce::Colour (0xFF3A3A48));
+                g.drawText (labels[i], tx - 16, b.getY() + 5, 32,
+                            b.getHeight() - 5, juce::Justification::centred);
+            }
+
+            g.setColour (juce::Colour (0xFF1E1E24));
+            g.drawHorizontalLine (b.getY(), (float) b.getX(), (float) b.getRight());
+        }
+    };
+
 public:
     //==========================================================================
     ArtistScreen()
@@ -141,6 +279,8 @@ public:
 
         addAndMakeVisible (levelMeter);
         levelMeter.setLevel (-18.0f, -22.0f);
+
+        addAndMakeVisible (trackWindow);
     }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
@@ -156,13 +296,13 @@ public:
 
     void resized() override
     {
-        constexpr int kHeader  = 44, kStatus = 32;
+        constexpr int kHeader  = 44, kStatus = 32, kTrack = 90;
         constexpr int kRing    = 130;
         constexpr int kLabelH  = 20, kLabelGap = 8;
         constexpr int kMeterH  = 64, kMeterGap = 18;
         constexpr int kBlock   = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
 
-        int usable = getHeight() - kHeader - kStatus;
+        int usable = getHeight() - kHeader - kStatus - kTrack;
         int top    = kHeader + (usable - kBlock) / 2;
         int cx     = (getWidth() - kRing) / 2;
 
@@ -170,6 +310,8 @@ public:
 
         int meterY = top + kRing + kLabelGap + kLabelH + kMeterGap;
         levelMeter.setBounds (28, meterY, getWidth() - 56, kMeterH);
+
+        trackWindow.setBounds (0, getHeight() - kStatus - kTrack, getWidth(), kTrack);
     }
 
 private:
@@ -259,6 +401,7 @@ private:
     juce::String sessionCode { "TAKE-0000" };
     RecordRing   recordRing;
     LevelMeter   levelMeter;
+    TrackWindow  trackWindow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };
