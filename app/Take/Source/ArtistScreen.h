@@ -261,6 +261,84 @@ class ArtistScreen : public juce::Component
         }
     };
 
+    //==========================================================================
+    class CueMixPanel : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (juce::Colour (0xFF18181C));
+            g.fillAll();
+
+            g.setColour (juce::Colour (0xFF222228));
+            g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+
+            g.setFont (TakeUI::monoFont (9.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText ("Cue mix", 12, 6, 60, 12, juce::Justification::centredLeft);
+
+            struct Knob { const char* label; float value; juce::uint32 colour; };
+            const Knob knobs[] = {
+                { "Reverb",  60.0f, 0xFFA78BFA },
+                { "Rev mix", 30.0f, 0xFFA78BFA },
+                { "Delay",   40.0f, 0xFF2DD4BF },
+                { "Del mix", 20.0f, 0xFF2DD4BF },
+                { "Comp",    50.0f, 0xFFFFB340 },
+                { "Cue vol", 75.0f, 0xFF3DDC84 },
+            };
+
+            float slotW = (float) getWidth() / 6.0f;
+            constexpr float kCy = 37.0f;
+
+            for (int i = 0; i < 6; ++i)
+            {
+                float cx = slotW * i + slotW * 0.5f;
+                drawKnob (g, cx, kCy, knobs[i].value,
+                          juce::Colour (knobs[i].colour), knobs[i].label);
+            }
+        }
+
+        void resized() override {}
+
+    private:
+        void drawKnob (juce::Graphics& g, float cx, float cy, float value,
+                       juce::Colour colour, const juce::String& label)
+        {
+            constexpr float r = 14.0f;
+
+            // circle body
+            g.setColour (juce::Colour (0xFF0A0A0B));
+            g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
+
+            // subtle border ring
+            g.setColour (juce::Colour (0xFF2A2A32));
+            g.drawEllipse (cx - r + 0.5f, cy - r + 0.5f,
+                           (r - 0.5f) * 2.0f, (r - 0.5f) * 2.0f, 1.0f);
+
+            // tick — angle=0 at 12 o'clock, CW positive (JUCE rotary convention)
+            static const float kStart = juce::MathConstants<float>::pi * 1.2f;
+            static const float kEnd   = juce::MathConstants<float>::pi * 2.8f;
+            float angle = kStart + (value / 100.0f) * (kEnd - kStart);
+
+            g.setColour (colour);
+            g.drawLine (cx + std::sin (angle) * 3.0f, cy - std::cos (angle) * 3.0f,
+                        cx + std::sin (angle) * 10.0f, cy - std::cos (angle) * 10.0f,
+                        2.0f);
+
+            // label
+            g.setFont (TakeUI::monoFont (8.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText (label, (int) (cx - 28.0f), (int) (cy + r + 3.0f),
+                        56, 10, juce::Justification::centred);
+
+            // value
+            g.setColour (colour.withAlpha (0.85f));
+            g.drawText (juce::String (juce::roundToInt (value)),
+                        (int) (cx - 20.0f), (int) (cy + r + 13.0f),
+                        40, 10, juce::Justification::centred);
+        }
+    };
+
 public:
     //==========================================================================
     ArtistScreen()
@@ -281,6 +359,7 @@ public:
         levelMeter.setLevel (-18.0f, -22.0f);
 
         addAndMakeVisible (trackWindow);
+        addAndMakeVisible (cueMixPanel);
     }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
@@ -296,14 +375,15 @@ public:
 
     void resized() override
     {
-        constexpr int kHeader  = 44, kStatus = 32, kTrack = 90;
-        constexpr int kRing    = 130;
-        constexpr int kLabelH  = 20, kLabelGap = 8;
-        constexpr int kMeterH  = 64, kMeterGap = 18;
-        constexpr int kBlock   = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
+        constexpr int kHeader   = 44, kStatus = 32;
+        constexpr int kTrack    = 90, kCueMix = 80;
+        constexpr int kRing     = 130;
+        constexpr int kLabelH   = 20, kLabelGap = 8;
+        constexpr int kMeterH   = 56, kMeterGap = 12;
+        constexpr int kBlock    = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
 
-        int usable = getHeight() - kHeader - kStatus - kTrack;
-        int top    = kHeader + (usable - kBlock) / 2;
+        int usable = getHeight() - kHeader - kStatus - kTrack - kCueMix;
+        int top    = kHeader + juce::jmax (8, (usable - kBlock) / 2);
         int cx     = (getWidth() - kRing) / 2;
 
         recordRing.setBounds (cx, top, kRing, kRing);
@@ -311,7 +391,9 @@ public:
         int meterY = top + kRing + kLabelGap + kLabelH + kMeterGap;
         levelMeter.setBounds (28, meterY, getWidth() - 56, kMeterH);
 
-        trackWindow.setBounds (0, getHeight() - kStatus - kTrack, getWidth(), kTrack);
+        int bottomStack = getHeight() - kStatus;
+        trackWindow.setBounds  (0, bottomStack - kTrack,           getWidth(), kTrack);
+        cueMixPanel.setBounds  (0, bottomStack - kTrack - kCueMix, getWidth(), kCueMix);
     }
 
 private:
@@ -402,6 +484,7 @@ private:
     RecordRing   recordRing;
     LevelMeter   levelMeter;
     TrackWindow  trackWindow;
+    CueMixPanel  cueMixPanel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };
