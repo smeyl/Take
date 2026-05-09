@@ -3,7 +3,7 @@
 //==============================================================================
 MainComponent::MainComponent()
 {
-    setSize (400, 560);
+    setSize (400, 620);
     showScreen (Screen::ROLE_SELECT);
 }
 
@@ -28,9 +28,7 @@ void MainComponent::showScreen (Screen screen)
     if (screen == Screen::ROLE_SELECT)
     {
         auto* s = new RoleSelectScreen();
-        s->onRoleSelected = [this] (bool isArtist) {
-            showScreen (isArtist ? Screen::ARTIST : Screen::ENGINEER);
-        };
+        s->onJoin = [this] { showScreen (Screen::ARTIST); };
         screenComponent.reset (s);
     }
     else if (screen == Screen::ARTIST)
@@ -57,14 +55,14 @@ void MainComponent::showScreen (Screen screen)
     }
     else if (screen == Screen::ARTIST)
     {
-        setSize (400, 560);
+        setSize (400, 620);
         if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (400, 560);
+            rw->setContentComponentSize (400, 620);
     }
     else  // ROLE_SELECT
     {
-        setSize (400, 560);
+        setSize (400, 620);
         if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (400, 560);
+            rw->setContentComponentSize (400, 620);
     }
 }

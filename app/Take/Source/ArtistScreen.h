@@ -10,6 +10,17 @@ namespace TakeUI
         int style = bold ? juce::Font::bold : juce::Font::plain;
         return juce::Font (juce::Font::getDefaultMonospacedFontName(), size, style);
     }
+
+    inline juce::String generateSessionCode()
+    {
+        juce::Random rng;
+        auto pair = [&]() {
+            return juce::String::charToString ((juce::juce_wchar) ('A' + rng.nextInt (26)))
+                   + juce::String (rng.nextInt (10));
+        };
+        juce::String dot = juce::String::charToString ((juce::juce_wchar) 0x00B7);
+        return pair() + " " + dot + " " + pair() + " " + dot + " " + pair();
+    }
 }
 
 //==============================================================================
@@ -315,7 +326,7 @@ class ArtistScreen : public juce::Component
         void drawKnob (juce::Graphics& g, float cx, float cy, float value,
                        juce::Colour colour, const juce::String& label)
         {
-            constexpr float r = 14.0f;
+            constexpr float r = 16.0f;
 
             g.setColour (juce::Colour (0xFF0A0A0B));
             g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
@@ -330,10 +341,10 @@ class ArtistScreen : public juce::Component
 
             g.setColour (colour);
             g.drawLine (cx + std::sin (angle) * 3.0f, cy - std::cos (angle) * 3.0f,
-                        cx + std::sin (angle) * 10.0f, cy - std::cos (angle) * 10.0f,
+                        cx + std::sin (angle) * 12.0f, cy - std::cos (angle) * 12.0f,
                         2.0f);
 
-            g.setFont (TakeUI::monoFont (8.0f));
+            g.setFont (TakeUI::monoFont (9.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText (label, (int) (cx - 28.0f), (int) (cy + r + 3.0f),
                         56, 10, juce::Justification::centred);
@@ -343,6 +354,37 @@ class ArtistScreen : public juce::Component
                         (int) (cx - 20.0f), (int) (cy + r + 13.0f),
                         40, 10, juce::Justification::centred);
         }
+    };
+
+    //==========================================================================
+    class SectionNowCard : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            auto b = getLocalBounds();
+
+            g.setColour (juce::Colour (0xFF18181C));
+            g.fillAll();
+
+            g.setColour (juce::Colour (0xFF222228));
+            g.drawHorizontalLine (0, 0.0f, (float) getWidth());
+
+            // Current section — blue, left side
+            int leftW = b.getWidth() / 2;
+            g.setFont (TakeUI::monoFont (14.0f, true));
+            g.setColour (juce::Colour (0xFF4F8FFF));
+            g.drawText ("Chorus", b.getX() + 12, b.getY(), leftW - 12, b.getHeight(),
+                        juce::Justification::centredLeft);
+
+            // Next section — muted, right side
+            g.setFont (TakeUI::monoFont (10.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText ("Next: Verse 2  ~14s", b.getX() + leftW, b.getY(), leftW - 12, b.getHeight(),
+                        juce::Justification::centredRight);
+        }
+
+        void resized() override {}
     };
 
 public:
@@ -375,6 +417,7 @@ public:
         levelMeter.setLevel (-18.0f, -22.0f);
 
         addAndMakeVisible (trackWindow);
+        addAndMakeVisible (sectionNow);
         addAndMakeVisible (cueMixPanel);
     }
 
@@ -392,18 +435,19 @@ public:
 
     void resized() override
     {
-        constexpr int kHeader   = 44;
-        constexpr int kStatus   = 32;
-        constexpr int kTrack    = 110;
-        constexpr int kCueMix   = 80;
-        constexpr int kPad      = 14;
-        constexpr int kRing     = 130;
-        constexpr int kLabelH   = 20, kLabelGap = 12;
-        constexpr int kMeterH   = 56, kMeterGap = 12;
-        constexpr int kBlock    = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
+        constexpr int kHeader     = 44;
+        constexpr int kStatus     = 32;
+        constexpr int kTrack      = 110;
+        constexpr int kSectionNow = 48;
+        constexpr int kCueMix     = 80;
+        constexpr int kPad        = 14;
+        constexpr int kRing       = 110;
+        constexpr int kLabelH     = 20, kLabelGap = 12;
+        constexpr int kMeterH     = 56, kMeterGap = 12;
+        constexpr int kBlock      = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
 
         int cw     = contentWidth();
-        int usable = getHeight() - kHeader - kDotsRowH - kStatus - kTrack - kCueMix;
+        int usable = getHeight() - kHeader - kDotsRowH - kStatus - kTrack - kSectionNow - kCueMix;
         int top    = kHeader + kDotsRowH + juce::jmax (12, (usable - kBlock) / 2);
         int cx     = (cw - kRing) / 2;
 
@@ -413,8 +457,9 @@ public:
         levelMeter.setBounds (kPad, meterY, cw - kPad * 2, kMeterH);
 
         int bottomStack = getHeight() - kStatus;
-        cueMixPanel.setBounds (kPad, bottomStack - kCueMix,          cw - kPad * 2, kCueMix);
-        trackWindow.setBounds (kPad, bottomStack - kCueMix - kTrack, cw - kPad * 2, kTrack);
+        cueMixPanel.setBounds (kPad, bottomStack - kCueMix,                        cw - kPad * 2, kCueMix);
+        sectionNow.setBounds  (kPad, bottomStack - kCueMix - kSectionNow,          cw - kPad * 2, kSectionNow);
+        trackWindow.setBounds (kPad, bottomStack - kCueMix - kSectionNow - kTrack, cw - kPad * 2, kTrack);
 
         detailsPanel.setBounds (kBaseWidth, 0, 300, getHeight());
     }
@@ -440,7 +485,7 @@ public:
 private:
     //==========================================================================
     static constexpr int kBaseWidth  = 400;
-    static constexpr int kBaseHeight = 560;
+    static constexpr int kBaseHeight = 620;
     static constexpr int kDotsRowH   = 32;
 
     int contentWidth() const { return juce::jmin (getWidth(), kBaseWidth); }
@@ -468,15 +513,18 @@ private:
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        // TAKE wordmark
+        // TAKE wordmark — "T" white, "AKE" green
         g.setFont (TakeUI::monoFont (16.0f, true));
-        g.setColour (juce::Colour (0xFF1D9E75));
         {
-            const char* const kL[] = { "T", "A", "K", "E", nullptr };
+            const char* const  kL[] = { "T", "A", "K", "E", nullptr };
+            const juce::uint32 kC[] = { 0xFFF0F0F8, 0xFF3DDC84, 0xFF3DDC84, 0xFF3DDC84 };
             constexpr float kSlot = 11.0f, kGap = 1.5f;
             float lx = 12.0f;
             for (int i = 0; kL[i]; ++i, lx += kSlot + kGap)
+            {
+                g.setColour (juce::Colour (kC[i]));
                 g.drawText (kL[i], (int) lx, 0, (int) kSlot + 1, 44, juce::Justification::centredLeft);
+            }
         }
 
         // Session code pill — right-aligned in header
@@ -574,13 +622,14 @@ private:
                     juce::Justification::centredLeft);
     }
 
-    bool         detailsVisible { false };
-    DetailsPanel detailsPanel;
-    juce::String sessionCode { "TAKE-0000" };
-    RecordRing   recordRing;
-    LevelMeter   levelMeter;
-    TrackWindow  trackWindow;
-    CueMixPanel  cueMixPanel;
+    bool          detailsVisible { false };
+    DetailsPanel  detailsPanel;
+    juce::String  sessionCode { TakeUI::generateSessionCode() };
+    RecordRing    recordRing;
+    LevelMeter    levelMeter;
+    TrackWindow   trackWindow;
+    SectionNowCard sectionNow;
+    CueMixPanel   cueMixPanel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };

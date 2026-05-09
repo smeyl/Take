@@ -45,31 +45,27 @@ public:
         g.setColour (colour);
         g.drawRoundedRectangle (0.5f, 0.5f, width - 1.0f, height - 1.0f, 6.0f, 1.0f);
     }
+
 };
 
 //==============================================================================
 class RoleSelectScreen : public juce::Component
 {
 public:
-    std::function<void(bool isArtist)> onRoleSelected;
+    std::function<void()> onJoin;
 
     RoleSelectScreen()
     {
         setLookAndFeel (&laf);
 
-        titleLabel.setText ("Take", juce::dontSendNotification);
-        titleLabel.setFont (juce::Font (juce::FontOptions (56.0f).withStyle ("Bold")));
-        titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xFFF0F0F8));
-        titleLabel.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (titleLabel);
-
-        subtitleLabel.setText ("Remote recording session", juce::dontSendNotification);
-        subtitleLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
+        subtitleLabel.setText ("Artist", juce::dontSendNotification);
+        subtitleLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
         subtitleLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF5C5C6E));
         subtitleLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (subtitleLabel);
 
-        sessionCodeEditor.setTextToShowWhenEmpty ("Session code", juce::Colour (0xFF5C5C6E));
+        sessionCodeEditor.setTextToShowWhenEmpty (juce::CharPointer_UTF8 ("A7 \xc2\xb7 F2 \xc2\xb7 K9"),
+                                                  juce::Colour (0xFF3A3A45));
         sessionCodeEditor.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
         sessionCodeEditor.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
         sessionCodeEditor.setColour (juce::TextEditor::outlineColourId,        juce::Colour (0xFF222228));
@@ -79,21 +75,13 @@ public:
         sessionCodeEditor.setJustification (juce::Justification::centred);
         addAndMakeVisible (sessionCodeEditor);
 
-        artistButton.setButtonText ("Join as Artist");
-        artistButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
-        artistButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF17805E));
-        artistButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFF0F0F8));
-        artistButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFF0F0F8));
-        artistButton.onClick = [this] { if (onRoleSelected) onRoleSelected (true); };
-        addAndMakeVisible (artistButton);
-
-        engineerButton.setButtonText ("Join as Engineer");
-        engineerButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF185FA5));
-        engineerButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF124C84));
-        engineerButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFF0F0F8));
-        engineerButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFF0F0F8));
-        engineerButton.onClick = [this] { if (onRoleSelected) onRoleSelected (false); };
-        addAndMakeVisible (engineerButton);
+        joinButton.setButtonText ("Join session");
+        joinButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
+        joinButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF17805E));
+        joinButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFF0F0F8));
+        joinButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFF0F0F8));
+        joinButton.onClick = [this] { if (onJoin) onJoin(); };
+        addAndMakeVisible (joinButton);
     }
 
     ~RoleSelectScreen() override
@@ -104,32 +92,31 @@ public:
     void paint (juce::Graphics& g) override
     {
         g.fillAll (juce::Colour (0xFF0A0A0B));
+
+        auto boldFont = juce::Font (juce::FontOptions (56.0f).withStyle ("Bold"));
+        juce::AttributedString logo;
+        logo.setJustification (juce::Justification::centred);
+        logo.append ("T",   boldFont, juce::Colour (0xFFF0F0F8));
+        logo.append ("ake", boldFont, juce::Colour (0xFF4F8FFF));
+        logo.draw (g, juce::Rectangle<float> (0.0f, 160.0f, (float) getWidth(), 66.0f));
     }
 
     void resized() override
     {
-        int w = getWidth();
+        int w   = getWidth();
+        int cx  = (w - 240) / 2;
 
-        titleLabel.setBounds (0, 100, w, 66);
-        subtitleLabel.setBounds (0, 164, w, 26);
-
-        int editorW = 240, editorH = 46;
-        sessionCodeEditor.setBounds ((w - editorW) / 2, 234, editorW, editorH);
-
-        int btnW = 110, btnH = 46, gap = 20;
-        int btnX = (w - btnW * 2 - gap) / 2;
-        artistButton.setBounds  (btnX,              318, btnW, btnH);
-        engineerButton.setBounds (btnX + btnW + gap, 318, btnW, btnH);
+        subtitleLabel.setBounds (0, 228, w, 22);
+        sessionCodeEditor.setBounds (cx, 266, 240, 46);
+        joinButton.setBounds        (cx, 328, 240, 46);
     }
 
 private:
-    // Declared first — destroyed last, outlives all child components.
     TakeLookAndFeel  laf;
 
-    juce::Label      titleLabel;
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
-    juce::TextButton artistButton, engineerButton;
+    juce::TextButton joinButton;
 };
 
 //==============================================================================
