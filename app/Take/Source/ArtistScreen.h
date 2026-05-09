@@ -135,7 +135,7 @@ class ArtistScreen : public juce::Component
     public:
         void paint (juce::Graphics& g) override
         {
-            constexpr int kSectH = 44, kWaveH = 48;
+            constexpr int kSectH = 28, kWaveH = 48;
             auto b = getLocalBounds();
             drawSections (g, b.removeFromTop (kSectH));
             drawWaveform (g, b.removeFromTop (kWaveH));
@@ -147,11 +147,11 @@ class ArtistScreen : public juce::Component
     private:
         void drawSections (juce::Graphics& g, juce::Rectangle<int> b)
         {
-            struct Sec { const char* name; const char* bars; bool current; };
+            struct Sec { const char* name; bool current; };
             const Sec secs[] = {
-                { "Verse 1", "",           false },
-                { "Chorus",  "Bars 17-24", true  },
-                { "Verse 2", "",           false },
+                { "Verse 1", false },
+                { "Chorus",  true  },
+                { "Verse 2", false },
             };
 
             int sw = b.getWidth() / 3;
@@ -170,19 +170,13 @@ class ArtistScreen : public juce::Component
                     g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.08f));
                     g.fillRect (r);
 
-                    auto cardR = r.reduced (2, 2);
+                    auto cardR = r.reduced (1, 1);
                     g.setColour (juce::Colour (0xFF2A2A38));
                     g.drawRoundedRectangle (cardR.toFloat(), 3.0f, 1.0f);
 
-                    g.setFont (TakeUI::monoFont (16.0f, true));
+                    g.setFont (TakeUI::monoFont (13.0f, true));
                     g.setColour (juce::Colour (0xFF4F8FFF));
-                    g.drawText (secs[i].name, r.getX() + 12, r.getY() + 5,
-                                r.getWidth() - 24, 20, juce::Justification::centredLeft);
-
-                    g.setFont (TakeUI::monoFont (9.0f));
-                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.55f));
-                    g.drawText (secs[i].bars, r.getX() + 12, r.getY() + 26,
-                                r.getWidth() - 24, 12, juce::Justification::centredLeft);
+                    g.drawText (secs[i].name, r, juce::Justification::centred);
                 }
                 else
                 {
