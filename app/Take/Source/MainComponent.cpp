@@ -3,7 +3,7 @@
 //==============================================================================
 MainComponent::MainComponent()
 {
-    setSize (400, 500);
+    setSize (400, 560);
     showScreen (Screen::ROLE_SELECT);
 }
 
@@ -35,11 +35,15 @@ void MainComponent::showScreen (Screen screen)
     }
     else if (screen == Screen::ARTIST)
     {
-        screenComponent = std::make_unique<ArtistScreen>();
+        auto* s = new ArtistScreen();
+        s->onBack = [this] { showScreen (Screen::ROLE_SELECT); };
+        screenComponent.reset (s);
     }
     else
     {
-        screenComponent = std::make_unique<EngineerScreen>();
+        auto* s = new EngineerScreen();
+        s->onBack = [this] { showScreen (Screen::ROLE_SELECT); };
+        screenComponent.reset (s);
     }
 
     addAndMakeVisible (*screenComponent);
@@ -52,6 +56,12 @@ void MainComponent::showScreen (Screen screen)
             rw->setContentComponentSize (820, 700);
     }
     else if (screen == Screen::ARTIST)
+    {
+        setSize (400, 560);
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+            rw->setContentComponentSize (400, 560);
+    }
+    else  // ROLE_SELECT
     {
         setSize (400, 560);
         if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))

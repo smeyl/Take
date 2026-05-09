@@ -347,6 +347,8 @@ class ArtistScreen : public juce::Component
 
 public:
     //==========================================================================
+    std::function<void()> onBack;
+
     ArtistScreen()
     {
         setOpaque (true);
@@ -419,6 +421,12 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
+        if (backBtnBounds().expanded (4).contains (e.getPosition()))
+        {
+            if (onBack) onBack();
+            return;
+        }
+
         if (detailsBtnBounds().expanded (4).contains (e.getPosition()))
         {
             detailsVisible = !detailsVisible;
@@ -442,6 +450,11 @@ private:
         int w = kBaseWidth + (withPanel ? 300 : 0);
         if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
             rw->setContentComponentSize (w, kBaseHeight);
+    }
+
+    juce::Rectangle<int> backBtnBounds() const
+    {
+        return { 12, getHeight() - 28, 44, 20 };
     }
 
     // Details button lives in the status bar
@@ -537,7 +550,12 @@ private:
         g.setColour (juce::Colour (0xFF1A1A20));
         g.drawHorizontalLine (barY, 0.0f, (float) getWidth());
 
-        // Details button — right side of status bar
+        // Back button — left side
+        g.setFont (TakeUI::monoFont (10.0f));
+        g.setColour (juce::Colour (0xFF5C5C6E));
+        g.drawText ("<- Back", 12, barY, 44, 32, juce::Justification::centredLeft);
+
+        // Details button — right side
         {
             auto db = detailsBtnBounds();
             g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
@@ -552,7 +570,7 @@ private:
         auto text = juce::String ("Latency 0ms  |  Take T")
                     + juce::String (recordRing.takeNumber)
                     + "  |  Stream AAC 256";
-        g.drawText (text, 16, barY, contentWidth() - 78, 32,
+        g.drawText (text, 62, barY, contentWidth() - 130, 32,
                     juce::Justification::centredLeft);
     }
 
