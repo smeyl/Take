@@ -51,4 +51,10 @@ void MainComponent::showScreen (Screen screen)
         if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
             rw->setContentComponentSize (820, 700);
     }
+    else if (screen == Screen::ARTIST)
+    {
+        setSize (400, 560);
+        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+            rw->setContentComponentSize (400, 560);
+    }
 }

@@ -29,7 +29,6 @@ class ArtistScreen : public juce::Component
             auto ringColour = isRecording ? juce::Colour (0xFFFF4F4F)
                                           : juce::Colour (0xFF185FA5);
 
-            // layered glow — multi-ring emanation, stronger when recording
             if (isRecording)
             {
                 g.setColour (ringColour.withAlpha (0.05f));
@@ -45,22 +44,18 @@ class ArtistScreen : public juce::Component
                 g.fillEllipse (body.expanded (8.0f));
             }
 
-            // circle fill
             g.setColour (juce::Colour (0xFF111113));
             g.fillEllipse (body);
 
-            // ring border
             g.setColour (ringColour);
             g.drawEllipse (body, 2.5f);
 
-            // main state label
             g.setFont (TakeUI::monoFont (17.0f, true));
             g.setColour (juce::Colour (0xFFF0F0F8));
             g.drawText (isRecording ? "REC" : "READY",
                         getLocalBounds().translated (0, -8),
                         juce::Justification::centred);
 
-            // take number inside ring
             g.setFont (TakeUI::monoFont (11.0f));
             g.setColour (ringColour.withAlpha (0.75f));
             g.drawText ("T" + juce::String (takeNumber),
@@ -104,17 +99,14 @@ class ArtistScreen : public juce::Component
         {
             g.setFont (TakeUI::monoFont (11.0f));
 
-            // channel label
             auto labelR = bounds.removeFromLeft (20);
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText (ch, labelR, juce::Justification::centred);
 
-            // dB readout
             auto dbR = bounds.removeFromRight (52);
             g.drawText (juce::String (juce::roundToInt (db)) + " dB",
                         dbR, juce::Justification::centred);
 
-            // thin bar — 6 px tall, vertically centred in the row
             auto area = bounds.reduced (6, 0);
             auto bar  = juce::Rectangle<int> (area.getX(),
                                               area.getCentreY() - 3,
@@ -143,7 +135,7 @@ class ArtistScreen : public juce::Component
     public:
         void paint (juce::Graphics& g) override
         {
-            constexpr int kSectH = 24, kWaveH = 48;
+            constexpr int kSectH = 44, kWaveH = 48;
             auto b = getLocalBounds();
             drawSections (g, b.removeFromTop (kSectH));
             drawWaveform (g, b.removeFromTop (kWaveH));
@@ -155,11 +147,11 @@ class ArtistScreen : public juce::Component
     private:
         void drawSections (juce::Graphics& g, juce::Rectangle<int> b)
         {
-            struct Sec { const char* name; bool current; };
+            struct Sec { const char* name; const char* bars; bool current; };
             const Sec secs[] = {
-                { "Verse 1", false },
-                { "Chorus",  true  },
-                { "Verse 2", false },
+                { "Verse 1", "",           false },
+                { "Chorus",  "Bars 17-24", true  },
+                { "Verse 2", "",           false },
             };
 
             int sw = b.getWidth() / 3;
@@ -175,20 +167,35 @@ class ArtistScreen : public juce::Component
 
                 if (secs[i].current)
                 {
-                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.10f));
+                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.08f));
                     g.fillRect (r);
-                }
 
-                if (i > 0)
+                    auto cardR = r.reduced (2, 2);
+                    g.setColour (juce::Colour (0xFF2A2A38));
+                    g.drawRoundedRectangle (cardR.toFloat(), 3.0f, 1.0f);
+
+                    g.setFont (TakeUI::monoFont (16.0f, true));
+                    g.setColour (juce::Colour (0xFF4F8FFF));
+                    g.drawText (secs[i].name, r.getX() + 12, r.getY() + 5,
+                                r.getWidth() - 24, 20, juce::Justification::centredLeft);
+
+                    g.setFont (TakeUI::monoFont (9.0f));
+                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.55f));
+                    g.drawText (secs[i].bars, r.getX() + 12, r.getY() + 26,
+                                r.getWidth() - 24, 12, juce::Justification::centredLeft);
+                }
+                else
                 {
-                    g.setColour (juce::Colour (0xFF1E1E24));
-                    g.drawVerticalLine (secX, (float) b.getY(), (float) b.getBottom());
-                }
+                    if (i > 0)
+                    {
+                        g.setColour (juce::Colour (0xFF1E1E24));
+                        g.drawVerticalLine (secX, (float) b.getY(), (float) b.getBottom());
+                    }
 
-                g.setFont (TakeUI::monoFont (10.0f));
-                g.setColour (secs[i].current ? juce::Colour (0xFF4F8FFF)
-                                             : juce::Colour (0xFF5C5C6E));
-                g.drawText (secs[i].name, r, juce::Justification::centred);
+                    g.setFont (TakeUI::monoFont (10.0f));
+                    g.setColour (juce::Colour (0xFF5C5C6E));
+                    g.drawText (secs[i].name, r, juce::Justification::centred);
+                }
             }
 
             g.setColour (juce::Colour (0xFF1E1E24));
@@ -205,13 +212,11 @@ class ArtistScreen : public juce::Component
             float cy   = (float) b.getCentreY();
             float maxH = b.getHeight() * 0.40f;
 
-            // punch zone: 20 %–50 % of width, red tint
             float punchX1 = bx + bw * 0.20f;
             float punchX2 = bx + bw * 0.50f;
             g.setColour (juce::Colour (0xFFFF4F4F).withAlpha (0.10f));
             g.fillRect (punchX1, (float) b.getY(), punchX2 - punchX1, (float) b.getHeight());
 
-            // waveform bars — deterministic trig, no random state needed
             for (int px = b.getX(); px < b.getRight(); px += 3)
             {
                 float t   = (float)(px - b.getX()) / bw;
@@ -226,7 +231,6 @@ class ArtistScreen : public juce::Component
                 g.drawLine ((float) px, cy - hh, (float) px, cy + hh, 1.0f);
             }
 
-            // playhead at 45 %
             float phX = bx + bw * 0.45f;
             g.setColour (juce::Colour (0xFF4F8FFF));
             g.drawLine (phX, (float) b.getY(), phX, (float) b.getBottom(), 1.5f);
@@ -252,7 +256,6 @@ class ArtistScreen : public juce::Component
                 g.drawLine ((float) tx, (float) b.getY(),
                             (float) tx, (float) (b.getY() + 4), 1.0f);
 
-                // three minor ticks between each pair of majors
                 if (i < 4)
                 {
                     for (int m = 1; m <= 3; ++m)
@@ -320,16 +323,13 @@ class ArtistScreen : public juce::Component
         {
             constexpr float r = 14.0f;
 
-            // circle body
             g.setColour (juce::Colour (0xFF0A0A0B));
             g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
 
-            // subtle border ring
             g.setColour (juce::Colour (0xFF2A2A32));
             g.drawEllipse (cx - r + 0.5f, cy - r + 0.5f,
                            (r - 0.5f) * 2.0f, (r - 0.5f) * 2.0f, 1.0f);
 
-            // tick — angle=0 at 12 o'clock, CW positive (JUCE rotary convention)
             static const float kStart = juce::MathConstants<float>::pi * 1.2f;
             static const float kEnd   = juce::MathConstants<float>::pi * 2.8f;
             float angle = kStart + (value / 100.0f) * (kEnd - kStart);
@@ -339,13 +339,11 @@ class ArtistScreen : public juce::Component
                         cx + std::sin (angle) * 10.0f, cy - std::cos (angle) * 10.0f,
                         2.0f);
 
-            // label
             g.setFont (TakeUI::monoFont (8.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText (label, (int) (cx - 28.0f), (int) (cy + r + 3.0f),
                         56, 10, juce::Justification::centred);
 
-            // value
             g.setColour (colour.withAlpha (0.85f));
             g.drawText (juce::String (juce::roundToInt (value)),
                         (int) (cx - 20.0f), (int) (cy + r + 13.0f),
@@ -371,10 +369,10 @@ public:
         recordRing.onClick = [this]
         {
             recordRing.isRecording = !recordRing.isRecording;
-            if (!recordRing.isRecording)   // stopped — advance to next take
+            if (!recordRing.isRecording)
                 recordRing.takeNumber++;
             recordRing.repaint();
-            repaint();                     // refresh status bar + take label
+            repaint();
         };
 
         addAndMakeVisible (levelMeter);
@@ -391,39 +389,42 @@ public:
     {
         g.fillAll (juce::Colour (0xFF111113));
         drawHeader (g);
+        drawConnectionDots (g, 44, kDotsRowH);
         drawTakeLabel (g);
         drawStatusBar (g);
     }
 
     void resized() override
     {
-        constexpr int kHeader   = 44, kStatus = 32;
-        constexpr int kTrack    = 90, kCueMix = 80;
+        constexpr int kHeader   = 44;
+        constexpr int kStatus   = 32;
+        constexpr int kTrack    = 110;
+        constexpr int kCueMix   = 80;
+        constexpr int kPad      = 14;
         constexpr int kRing     = 130;
-        constexpr int kLabelH   = 20, kLabelGap = 8;
+        constexpr int kLabelH   = 20, kLabelGap = 12;
         constexpr int kMeterH   = 56, kMeterGap = 12;
         constexpr int kBlock    = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
 
         int cw     = contentWidth();
-        int usable = getHeight() - kHeader - kStatus - kTrack - kCueMix;
-        int top    = kHeader + juce::jmax (8, (usable - kBlock) / 2);
+        int usable = getHeight() - kHeader - kDotsRowH - kStatus - kTrack - kCueMix;
+        int top    = kHeader + kDotsRowH + juce::jmax (12, (usable - kBlock) / 2);
         int cx     = (cw - kRing) / 2;
 
         recordRing.setBounds (cx, top, kRing, kRing);
 
         int meterY = top + kRing + kLabelGap + kLabelH + kMeterGap;
-        levelMeter.setBounds (28, meterY, cw - 56, kMeterH);
+        levelMeter.setBounds (kPad, meterY, cw - kPad * 2, kMeterH);
 
         int bottomStack = getHeight() - kStatus;
-        cueMixPanel.setBounds  (0, bottomStack - kCueMix,          cw, kCueMix);
-        trackWindow.setBounds  (0, bottomStack - kCueMix - kTrack, cw, kTrack);
+        cueMixPanel.setBounds (kPad, bottomStack - kCueMix,          cw - kPad * 2, kCueMix);
+        trackWindow.setBounds (kPad, bottomStack - kCueMix - kTrack, cw - kPad * 2, kTrack);
 
         detailsPanel.setBounds (kBaseWidth, 0, 300, getHeight());
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        // Expand hit area slightly for the small Details button
         if (detailsBtnBounds().expanded (4).contains (e.getPosition()))
         {
             detailsVisible = !detailsVisible;
@@ -437,7 +438,8 @@ public:
 private:
     //==========================================================================
     static constexpr int kBaseWidth  = 400;
-    static constexpr int kBaseHeight = 500;
+    static constexpr int kBaseHeight = 560;
+    static constexpr int kDotsRowH   = 32;
 
     int contentWidth() const { return juce::jmin (getWidth(), kBaseWidth); }
 
@@ -448,15 +450,18 @@ private:
             rw->setContentComponentSize (w, kBaseHeight);
     }
 
-    juce::Rectangle<int> detailsBtnBounds() const { return { contentWidth() - 54, 9, 44, 26 }; }
+    // Details button lives in the status bar
+    juce::Rectangle<int> detailsBtnBounds() const
+    {
+        return { contentWidth() - 58, getHeight() - 29, 44, 26 };
+    }
 
     void drawHeader (juce::Graphics& g)
     {
-        // separator
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        // TAKE wordmark — 16px bold with subtle letter spacing
+        // TAKE wordmark
         g.setFont (TakeUI::monoFont (16.0f, true));
         g.setColour (juce::Colour (0xFF1D9E75));
         {
@@ -467,26 +472,20 @@ private:
                 g.drawText (kL[i], (int) lx, 0, (int) kSlot + 1, 44, juce::Justification::centredLeft);
         }
 
-        // Details button — right-aligned at getWidth()-10
+        // Session code pill — right-aligned in header
         {
-            auto db = detailsBtnBounds();
-            g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
-            g.fillRoundedRectangle (db.toFloat(), 4.0f);
-            g.setFont (TakeUI::monoFont (10.0f));
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText ("Details", db, juce::Justification::centred);
+            auto pill = juce::Rectangle<int> (contentWidth() - 102, 11, 90, 22);
+            g.setColour (juce::Colour (0xFF18181C));
+            g.fillRoundedRectangle (pill.toFloat(), 4.0f);
+            g.setColour (juce::Colour (0xFF222228));
+            g.drawRoundedRectangle (pill.toFloat(), 4.0f, 1.0f);
+            g.setFont (TakeUI::monoFont (9.0f));
+            g.setColour (juce::Colour (0xFF7A7A8E));
+            g.drawText (sessionCode, pill, juce::Justification::centred);
         }
-
-        // Session code — right-aligned at getWidth()-70 (left of Details button)
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText (sessionCode, contentWidth() - 170, 0, 100, 44,
-                    juce::Justification::centredRight);
-
-        drawConnectionDots (g);
     }
 
-    void drawConnectionDots (juce::Graphics& g)
+    void drawConnectionDots (juce::Graphics& g, int rowY, int rowH)
     {
         struct Dot { const char* label; bool on; int approxW; };
         const Dot dots[] = {
@@ -495,16 +494,14 @@ private:
             { "Engineer",  false, 58 },
         };
 
-        constexpr int kDot = 6, kGap = 5, kBetween = 16;
+        constexpr int kPad = 14, kDot = 6, kGap = 5, kBetween = 16;
         int totalW = 0;
         for (auto& d : dots) totalW += kDot + kGap + d.approxW + kBetween;
         totalW -= kBetween;
 
-        // centre the cluster between x=80 and getWidth()-140
-        int left  = 80;
-        int right = contentWidth() - 140;
-        int x     = left + (right - left - totalW) / 2;
-        int dotY  = (44 - kDot) / 2;
+        int cw   = contentWidth();
+        int x    = kPad + (cw - kPad * 2 - totalW) / 2;
+        int dotY = rowY + (rowH - kDot) / 2;
 
         g.setFont (TakeUI::monoFont (10.0f));
 
@@ -522,7 +519,7 @@ private:
             g.fillEllipse ((float) x, (float) dotY, (float) kDot, (float) kDot);
 
             g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (d.label, x + kDot + kGap, 0, d.approxW, 44,
+            g.drawText (d.label, x + kDot + kGap, rowY, d.approxW, rowH,
                         juce::Justification::centredLeft);
 
             x += kDot + kGap + d.approxW + kBetween;
@@ -531,7 +528,7 @@ private:
 
     void drawTakeLabel (juce::Graphics& g)
     {
-        int y = recordRing.getBottom() + 8;
+        int y = recordRing.getBottom() + 12;
         g.setFont (TakeUI::monoFont (12.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText ("T" + juce::String (recordRing.takeNumber),
@@ -546,13 +543,22 @@ private:
         g.setColour (juce::Colour (0xFF1A1A20));
         g.drawHorizontalLine (barY, 0.0f, (float) getWidth());
 
+        // Details button — right side of status bar
+        {
+            auto db = detailsBtnBounds();
+            g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
+            g.fillRoundedRectangle (db.toFloat(), 4.0f);
+            g.setFont (TakeUI::monoFont (10.0f));
+            g.setColour (juce::Colour (0xFF5C5C6E));
+            g.drawText ("Details", db, juce::Justification::centred);
+        }
+
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-
         auto text = juce::String ("Latency 0ms  |  Take T")
                     + juce::String (recordRing.takeNumber)
                     + "  |  Stream AAC 256";
-        g.drawText (text, 16, barY, contentWidth() - 32, 32,
+        g.drawText (text, 16, barY, contentWidth() - 78, 32,
                     juce::Justification::centredLeft);
     }
 
