@@ -3,10 +3,11 @@ const path = require('path')
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 820,
-    height: 700,
+    width: 500,
+    height: 420,
     backgroundColor: '#0a0a0b',
     titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
