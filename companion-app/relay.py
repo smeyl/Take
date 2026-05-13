@@ -3,8 +3,11 @@ import string
 import time
 from datetime import datetime
 from flask import Flask, request, jsonify
+from flask_cors import CORS
+import requests as _requests
 
 app = Flask(__name__)
+CORS(app)
 
 SESSION_TTL = 24 * 3600
 HEARTBEAT_TTL = 15  # seconds before a role is considered dead
@@ -31,7 +34,7 @@ def log(msg):
 @app.route("/session/new", methods=["POST"])
 def new_session():
     prune_expired()
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     engineer_ip = data.get("ip") or request.remote_addr
     code = generate_code()
     sessions[code] = {
@@ -44,10 +47,24 @@ def new_session():
     return jsonify({"code": code})
 
 
+ACTIVE_TTL = 5 * 60  # 5 minutes
+
+
+@app.route("/session/active", methods=["GET"])
+def active_session():
+    now = time.time()
+    recent = [(code, s) for code, s in sessions.items()
+              if now - s["created_at"] < ACTIVE_TTL]
+    if not recent:
+        return jsonify({"error": "no active session"}), 404
+    code, s = max(recent, key=lambda x: x[1]["created_at"])
+    return jsonify({"code": code, "engineer_ip": s["engineer_ip"]})
+
+
 @app.route("/session/join", methods=["POST"])
 def join_session():
     prune_expired()
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     code = data.get("code", "")
     artist_ip = data.get("ip") or request.remote_addr
     if code not in sessions:
@@ -73,7 +90,7 @@ def get_session(code):
 def heartbeat(code):
     if code not in sessions:
         return jsonify({"error": "session not found"}), 404
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     role = data.get("role")
     if role not in ("engineer", "artist"):
         return jsonify({"error": "invalid role"}), 400
@@ -103,6 +120,15 @@ def end_session(code):
     del sessions[code]
     log(f"Session {code} ended")
     return jsonify({"status": "ended"})
+
+
+@app.route("/reaper/status", methods=["GET"])
+def reaper_status():
+    try:
+        _requests.get("http://localhost:8080", timeout=2)
+        return jsonify({"reachable": True})
+    except _requests.RequestException:
+        return jsonify({"reachable": False})
 
 
 if __name__ == "__main__":

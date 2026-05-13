@@ -4,6 +4,7 @@ import queue
 import threading
 from datetime import datetime
 from flask import Flask, jsonify
+from flask_cors import CORS
 import sounddevice as sd
 import soundfile as sf
 
@@ -15,6 +16,7 @@ RATE = 44100
 CHANNELS = 1
 
 app = Flask(__name__)
+CORS(app)
 
 _lock = threading.Lock()
 _recording = False

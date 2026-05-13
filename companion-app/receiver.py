@@ -1,5 +1,6 @@
 import os
 from flask import Flask, request
+from flask_cors import CORS
 
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
 PORT = 5001
@@ -7,6 +8,7 @@ PORT = 5001
 on_file_received = None  # optional callback(filename, size) set by the host app
 
 app = Flask(__name__)
+CORS(app)
 
 
 @app.route("/upload", methods=["POST"])
