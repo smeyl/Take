@@ -1,4 +1,5 @@
 import random
+import socket as _socket
 import string
 import time
 from datetime import datetime
@@ -14,6 +15,7 @@ HEARTBEAT_TTL = 15  # seconds before a role is considered dead
 sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 
 CHARS = string.ascii_uppercase + string.digits
+CUE_PORT = 5003
 
 
 def generate_code():
@@ -120,6 +122,26 @@ def end_session(code):
     del sessions[code]
     log(f"Session {code} ended")
     return jsonify({"status": "ended"})
+
+
+@app.route("/cue/<param>/<value>", methods=["POST"])
+def cue_forward(param, value):
+    now = time.time()
+    recent = [(code, s) for code, s in sessions.items()
+              if now - s["created_at"] < ACTIVE_TTL]
+    if not recent:
+        return jsonify({"error": "no active session"}), 404
+    _, s = max(recent, key=lambda x: x[1]["created_at"])
+    artist_ip = s.get("artist_ip")
+    if not artist_ip:
+        return jsonify({"error": "artist not connected"}), 404
+    msg = f"{param}:{value}".encode()
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    try:
+        sock.sendto(msg, (artist_ip, CUE_PORT))
+    finally:
+        sock.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/reaper/status", methods=["GET"])

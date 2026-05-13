@@ -1,11 +1,17 @@
 import os
+import threading
 import time
+from datetime import datetime
+
 import requests
+from flask import Flask, jsonify
+from flask_cors import CORS
 
 from reaper import BASE
 from sender import send_file
 
-TARGET_IP = "127.0.0.1"  # change this for real network testing
+TARGET_IP = "127.0.0.1"  # set by start_engineer.py after artist joins
+BOUNCE_PORT = 5006
 RENDER_OUTPUT = "/tmp/take_backing_track.mp3"
 
 # File: Render project, using most recent render settings, auto-close render dialog
@@ -46,6 +52,47 @@ def wait_for_render(path):
         elapsed += POLL_INTERVAL
 
     return False
+
+
+bounce_app = Flask("bounce_server")
+CORS(bounce_app)
+
+_bouncing = False
+_last_result = None
+_last_time = None
+
+
+def _do_bounce():
+    global _bouncing, _last_result, _last_time
+    if os.path.exists(RENDER_OUTPUT):
+        os.remove(RENDER_OUTPUT)
+    ok = trigger_render() and wait_for_render(RENDER_OUTPUT)
+    if ok:
+        send_file(RENDER_OUTPUT, TARGET_IP)
+        _last_result = "ok"
+    else:
+        _last_result = "error"
+    _last_time = datetime.now().isoformat()
+    _bouncing = False
+
+
+@bounce_app.route("/bounce", methods=["POST"])
+def bounce_route():
+    global _bouncing
+    if _bouncing:
+        return jsonify({"error": "already bouncing"}), 409
+    _bouncing = True
+    threading.Thread(target=_do_bounce, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@bounce_app.route("/bounce/status", methods=["GET"])
+def bounce_status():
+    return jsonify({"bouncing": _bouncing, "result": _last_result, "time": _last_time})
+
+
+def run_bounce_server():
+    bounce_app.run(host="0.0.0.0", port=BOUNCE_PORT)
 
 
 if __name__ == "__main__":

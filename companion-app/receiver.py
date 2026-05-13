@@ -1,11 +1,13 @@
 import os
-from flask import Flask, request
+from datetime import datetime
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
 PORT = 5001
 
 on_file_received = None  # optional callback(filename, size) set by the host app
+_received_takes = []
 
 app = Flask(__name__)
 CORS(app)
@@ -22,10 +24,16 @@ def upload():
     dest = os.path.join(INCOMING_PATH, f.filename)
     f.save(dest)
     size = os.path.getsize(dest)
+    _received_takes.append({"name": f.filename, "size": size, "time": datetime.now().isoformat()})
     print(f"Received: {f.filename} ({size} bytes)")
     if on_file_received:
         on_file_received(f.filename, size)
     return "OK", 200
+
+
+@app.route("/takes", methods=["GET"])
+def get_takes():
+    return jsonify(_received_takes)
 
 
 if __name__ == "__main__":

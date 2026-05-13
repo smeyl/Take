@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import C from "../constants/colors";
 import Knob from "./Knob";
 import WaveCanvas from "./WaveCanvas";
@@ -7,6 +7,7 @@ import DetailsPanel from "./DetailsPanel";
 const RELAY         = "http://localhost:5010";
 const TRANSPORT     = "http://localhost:5004";
 const FILE_RECEIVER = "http://localhost:5001";
+const BOUNCE        = "http://localhost:5006";
 
 export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [recording, setRecording]   = useState(false);
@@ -19,10 +20,21 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [notifySync, setNotifySync] = useState(false);
   const [tracks, setTracks]         = useState({ drums: true, bass: true, keys: true });
   const [btQ, setBtQ]               = useState("MP3 256");
-  const [btSent, setBtSent]         = useState(true);
   const [showDetails, setShowDetails] = useState(false);
+  const [receivedTakes, setReceivedTakes] = useState([]);
+  const [latencyMs, setLatencyMs]   = useState(null);
+  const [bouncing, setBouncing]     = useState(false);
 
-  const updateCue = (k, v) => setCue(c => ({ ...c, [k]: v }));
+  const sendCue = async (param, value) => {
+    try {
+      await fetch(`${RELAY}/cue/${param}/${value}`, { method: "POST" });
+    } catch {}
+  };
+
+  const updateCue = (k, v) => {
+    setCue(c => ({ ...c, [k]: v }));
+    sendCue(k, v);
+  };
 
   // ── Transport actions ────────────────────────────────────────────────────────
   const handleRec = async () => {
@@ -47,6 +59,16 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     } catch {}
   };
 
+  const handleBounce = async () => {
+    if (bouncing) return;
+    setBouncing(true);
+    try {
+      await fetch(`${BOUNCE}/bounce`, { method: "POST" });
+    } catch {
+      setBouncing(false);
+    }
+  };
+
   // ── Polling ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     const pollTransport = async () => {
@@ -60,11 +82,20 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       } catch {}
     };
 
+    const pollTakes = async () => {
+      try {
+        const r = await fetch(`${FILE_RECEIVER}/takes`);
+        if (r.ok) setReceivedTakes(await r.json());
+      } catch {}
+    };
+
     const pollSession = async () => {
       let relayOk = false;
       try {
+        const t0 = Date.now();
         const r = await fetch(`${RELAY}/session/${sessionCode}/status`);
         if (r.ok) {
+          setLatencyMs(Date.now() - t0);
           relayOk = true;
           const data = await r.json();
           setDots(d => ({ ...d, companion: true, artist: Boolean(data.artist) }));
@@ -89,20 +120,41 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       } catch {
         setDots(d => ({ ...d, reaper: false }));
       }
+
+      try {
+        const rb = await fetch(`${BOUNCE}/bounce/status`);
+        if (rb.ok) {
+          const bd = await rb.json();
+          setBouncing(bd.bouncing);
+        }
+      } catch {}
     };
 
     pollTransport();
+    pollTakes();
     pollSession();
     const t1 = setInterval(pollTransport, 2000);
-    const t2 = setInterval(pollSession, 3000);
-    return () => { clearInterval(t1); clearInterval(t2); };
+    const t2 = setInterval(pollTakes, 2000);
+    const t3 = setInterval(pollSession, 3000);
+    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
   }, [sessionCode]);
 
+  const takesScrollRef = useRef(null);
+  useEffect(() => {
+    if (takesScrollRef.current) {
+      takesScrollRef.current.scrollTop = takesScrollRef.current.scrollHeight;
+    }
+  }, [takeCount]);
+
   // ── Derived state ────────────────────────────────────────────────────────────
-  const takes = takeCount === 0 ? [] : Array.from({ length: takeCount }, (_, i) => {
+  const takes = Array.from({ length: takeCount }, (_, i) => {
     const n = i + 1;
-    return { id: `T${n}`, s: n === takeCount && recording ? "live" : "done" };
+    const isLive = recording && n === takeCount;
+    const received = receivedTakes.find(t => t.name.startsWith(`T${n}_`));
+    return { id: received ? received.name.split("_")[0] : `T${n}`, s: isLive ? "live" : "done" };
   });
+
+  const lastFile = receivedTakes.length > 0 ? receivedTakes[receivedTakes.length - 1] : null;
 
   const displayCode = sessionCode
     ? `${sessionCode.slice(0, 2)} · ${sessionCode.slice(2, 4)} · ${sessionCode.slice(4, 6)}`
@@ -144,7 +196,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             </div>
             <div>
               <div className="sec-label">Takes</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="takes-scroll" ref={takesScrollRef}>
                 {takes.length === 0 && (
                   <div style={{ fontSize: 9, color: C.dim, fontStyle: "italic" }}>No takes yet</div>
                 )}
@@ -266,20 +318,28 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             <div className="pill-grp" style={{ flexDirection: "column", gap: 4 }}>
               {["MP3 128", "MP3 256", "WAV 24"].map(q => <div key={q} className={`pill ${btQ === q ? "on" : ""}`} onClick={() => setBtQ(q)} style={{ textAlign: "center" }}>{q}</div>)}
             </div>
-            <div className="ebtn ebtn-blue" onClick={() => setBtSent(false)} style={{ marginTop: 6 }}>
-              {btSent ? "↑ Send to artist" : "Sending..."}
+            <div
+              className="ebtn ebtn-blue"
+              onClick={handleBounce}
+              style={{ marginTop: 6, opacity: bouncing ? 0.5 : 1, cursor: bouncing ? "default" : "pointer" }}
+            >
+              {bouncing ? "⟳ Bouncing..." : "↑ Bounce & send"}
             </div>
             <div className="swap-card">
-              <div style={{ color: C.body, marginBottom: 3 }}>session_BT_v3.mp3</div>
-              <div style={{ color: C.muted, marginBottom: 3 }}>Sent 14:32 · 8.2MB</div>
-              <div style={{ color: btSent ? C.green : C.amber }}>{btSent ? "✓ Artist confirmed" : "Transferring..."}</div>
+              <div style={{ color: C.body, marginBottom: 3 }}>{bouncing ? "Rendering in Reaper…" : "session_BT.mp3"}</div>
+              <div style={{ color: bouncing ? C.amber : C.muted }}>{bouncing ? "In progress" : "Ready to send"}</div>
             </div>
             <div style={{ marginTop: "auto" }}>
               <div className="sec-label">Last file swap</div>
               <div className="swap-card">
-                <div style={{ color: C.body }}>{takeCount > 0 ? `T${takeCount} — just now` : "—"}</div>
-                <div style={{ color: C.muted }}>0.4s · {syncFmt}</div>
-                <div style={{ color: C.green, marginTop: 2 }}>{takeCount > 0 ? "✓ Timeline updated" : ""}</div>
+                {lastFile ? <>
+                  <div style={{ color: C.body }}>{lastFile.name.split("_")[0]} — {new Date(lastFile.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                  <div style={{ color: C.muted }}>{(lastFile.size / 1024 / 1024).toFixed(1)}MB · {syncFmt}</div>
+                  <div style={{ color: C.green, marginTop: 2 }}>✓ Timeline updated</div>
+                </> : <>
+                  <div style={{ color: C.body }}>—</div>
+                  <div style={{ color: C.muted }}>No files yet</div>
+                </>}
               </div>
             </div>
           </div>
@@ -288,7 +348,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         {/* Footer */}
         <div className="eng-footer">
           <span className="back-btn" style={{ color: C.blue, cursor: "pointer", marginRight: "auto" }} onClick={onBack}>← Back</span>
-          <span style={{ color: C.body, marginRight: 12 }}>22ms</span>
+          <span style={{ color: C.body, marginRight: 12 }}>{latencyMs !== null ? `${latencyMs}ms` : "—"}</span>
           <span style={{ marginRight: 4 }}>Format</span><span style={{ color: C.body, marginRight: 12 }}>{syncFmt}</span>
           <span style={{ marginRight: 4 }}>Stream</span><span style={{ color: C.body, marginRight: 12 }}>{streamQ}</span>
           <span style={{ marginRight: 4 }}>Takes</span><span style={{ color: C.body }}>{takeCount > 0 ? `T${takeCount}` : "—"}</span>

@@ -7,6 +7,7 @@ import time
 import requests
 import pyaudio
 
+import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
 import cue_sender
 import timecode
@@ -137,6 +138,7 @@ if __name__ == "__main__":
             pass
 
     cue_sender.TARGET_IP = artist_ip
+    bounce.TARGET_IP = artist_ip
     cue_sender.transport_callbacks["record"] = engineer_record
     cue_sender.transport_callbacks["stop"] = engineer_stop
     cue_sender.transport_callbacks["status"] = engineer_status
@@ -157,6 +159,7 @@ if __name__ == "__main__":
 
     threads = [
         threading.Thread(target=run_receiver, name="http-receiver", daemon=True),
+        threading.Thread(target=bounce.run_bounce_server, name="bounce-server", daemon=True),
         threading.Thread(target=run_stream_receiver, name="stream-receiver", daemon=True),
         threading.Thread(
             target=run_heartbeat,
