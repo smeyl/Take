@@ -6,7 +6,7 @@ import EngineerApp from "./components/EngineerApp";
 export default function App() {
   const [screen, setScreen] = useState("session");
   const [sessionCode, setSessionCode] = useState("");
-  const [cue, setCue] = useState({ rev: 72, revMix: 38, del: 50, delMix: 22, comp: 55, ratio: 40, vol: 78 });
+  const [cue, setCue] = useState({ rev: 0, revMix: 0, del: 0, delMix: 0, comp: 0, vol: 100 });
 
   return (
     <div className="root">

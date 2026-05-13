@@ -124,8 +124,25 @@ def end_session(code):
     return jsonify({"status": "ended"})
 
 
+# Maps UI knob keys → cue_receiver.py param names.
+# Keys absent from this map (revMix, delMix, ratio) have no DSP equivalent
+# and are intentionally dropped rather than forwarded as unknown names.
+_CUE_PARAM_MAP = {
+    "rev":    "reverb",
+    "revMix": "reverbMix",
+    "del":    "delay",
+    "delMix": "delayMix",
+    "comp":   "compression",
+    "vol":    "volume",
+    # "ratio" intentionally absent — hardcoded to 4.0 in DSP
+}
+
+
 @app.route("/cue/<param>/<value>", methods=["POST"])
 def cue_forward(param, value):
+    dsp_name = _CUE_PARAM_MAP.get(param)
+    if dsp_name is None:
+        return jsonify({"ok": True, "dropped": True})  # no DSP equivalent
     now = time.time()
     recent = [(code, s) for code, s in sessions.items()
               if now - s["created_at"] < ACTIVE_TTL]
@@ -135,7 +152,7 @@ def cue_forward(param, value):
     artist_ip = s.get("artist_ip")
     if not artist_ip:
         return jsonify({"error": "artist not connected"}), 404
-    msg = f"{param}:{value}".encode()
+    msg = f"{dsp_name}:{value}".encode()
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     try:
         sock.sendto(msg, (artist_ip, CUE_PORT))
