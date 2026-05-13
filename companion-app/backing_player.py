@@ -12,17 +12,12 @@ stop_event = threading.Event()
 
 
 def run_backing_player():
-    print(f"[debug] backing_player started, polling for {BACKING_PATH}")
     while not stop_event.is_set():
-        exists = os.path.exists(BACKING_PATH)
-        print(f"[debug] poll: file exists = {exists}")
-        if not exists:
+        if not os.path.exists(BACKING_PATH):
             time.sleep(1)
             continue
 
-        print(f"[debug] file detected — reading with soundfile")
         data, samplerate = sf.read(BACKING_PATH, dtype="float32")
-        print(f"[debug] loaded: shape={data.shape}, samplerate={samplerate}, dtype={data.dtype}")
         if data.ndim == 1:
             data = data.reshape(-1, 1)
 
@@ -30,8 +25,6 @@ def run_backing_player():
         pos = [0]
 
         def callback(outdata, frames, time_info, status):
-            if status:
-                print(f"[debug] stream status: {status}")
             start = pos[0]
             end = start + frames
             if end >= len(data):
@@ -43,14 +36,11 @@ def run_backing_player():
                 outdata[:] = data[start:end]
                 pos[0] = end
 
-        print(f"[debug] opening OutputStream: samplerate={samplerate}, channels={channels}")
         print("Backing track received - playing")
         with sd.OutputStream(samplerate=samplerate, channels=channels,
                              dtype="float32", callback=callback):
-            print("[debug] OutputStream open — playback running")
             while not stop_event.is_set():
                 time.sleep(0.1)
-        print("[debug] OutputStream closed")
 
 
 if __name__ == "__main__":

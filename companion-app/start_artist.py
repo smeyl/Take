@@ -1,7 +1,9 @@
+import socket
 import time
 import threading
+import requests
 
-TARGET_IP = "127.0.0.1"  # change this for real network testing
+RELAY_URL = "http://192.0.2.10:5010"
 
 import watcher
 import artist
@@ -12,14 +14,28 @@ from backing_player import run_backing_player, BACKING_PATH
 from cue_receiver import listen_for_cues
 from watcher import WATCH_PATH
 
-# Propagate TARGET_IP to both modules that reference it at call time
-watcher.TARGET_IP = TARGET_IP
-artist.TARGET_IP = TARGET_IP
-
 STREAM_PORT = 5002
 FILE_PORT = 5001
 
+
+def get_local_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+
+
 if __name__ == "__main__":
+    code = input("Enter session code: ")
+    local_ip = get_local_ip()
+
+    resp = requests.post(f"{RELAY_URL}/session/join", json={"code": code, "ip": local_ip})
+    resp.raise_for_status()
+    TARGET_IP = resp.json()["engineer_ip"]
+    print(f"Engineer found — {TARGET_IP}")
+
+    watcher.TARGET_IP = TARGET_IP
+    artist.TARGET_IP = TARGET_IP
+
     threads = [
         threading.Thread(target=run_watcher, name="watcher", daemon=True),
         threading.Thread(target=run_stream, args=(cue_receiver.params,), name="stream", daemon=True),

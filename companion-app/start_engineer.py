@@ -10,6 +10,7 @@ import cue_sender
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
 from reaper import BASE
 
+RELAY_URL = "http://192.0.2.10:5010"
 STREAM_PORT = 5002
 CHUNK = 1024
 RATE = 44100
@@ -17,6 +18,12 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 
 stop_event = threading.Event()
+
+
+def get_local_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
 
 
 def check_reaper():
@@ -49,6 +56,28 @@ def run_stream_receiver():
 
 
 if __name__ == "__main__":
+    local_ip = get_local_ip()
+    resp = requests.post(f"{RELAY_URL}/session/new", json={"ip": local_ip})
+    resp.raise_for_status()
+    code = resp.json()["code"]
+
+    display_code = f"{code[0:2]} · {code[2:4]} · {code[4:6]}"
+    print(f"\nSession code: {display_code}\n")
+    print("Waiting for artist to join...")
+
+    artist_ip = None
+    while artist_ip is None:
+        time.sleep(2)
+        try:
+            r = requests.get(f"{RELAY_URL}/session/{code}", timeout=5)
+            if r.status_code == 200:
+                artist_ip = r.json()["artist_ip"]
+        except requests.RequestException:
+            pass
+
+    cue_sender.TARGET_IP = artist_ip
+    print(f"Artist connected — {artist_ip}\n")
+
     reaper_ok = check_reaper()
 
     threads = [
