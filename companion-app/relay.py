@@ -7,7 +7,8 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 SESSION_TTL = 24 * 3600
-sessions = {}  # code -> {engineer_ip, artist_ip, created_at}
+HEARTBEAT_TTL = 15  # seconds before a role is considered dead
+sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 
 CHARS = string.ascii_uppercase + string.digits
 
@@ -33,7 +34,12 @@ def new_session():
     data = request.get_json(force=True) or {}
     engineer_ip = data.get("ip") or request.remote_addr
     code = generate_code()
-    sessions[code] = {"engineer_ip": engineer_ip, "artist_ip": None, "created_at": time.time()}
+    sessions[code] = {
+        "engineer_ip": engineer_ip,
+        "artist_ip": None,
+        "created_at": time.time(),
+        "heartbeats": {"engineer": None, "artist": None},
+    }
     log(f"New session {code} — engineer {engineer_ip}")
     return jsonify({"code": code})
 
@@ -61,6 +67,33 @@ def get_session(code):
     if s["artist_ip"] is None:
         return jsonify({"status": "waiting"}), 202
     return jsonify({"engineer_ip": s["engineer_ip"], "artist_ip": s["artist_ip"]})
+
+
+@app.route("/session/<code>/heartbeat", methods=["POST"])
+def heartbeat(code):
+    if code not in sessions:
+        return jsonify({"error": "session not found"}), 404
+    data = request.get_json(force=True) or {}
+    role = data.get("role")
+    if role not in ("engineer", "artist"):
+        return jsonify({"error": "invalid role"}), 400
+    sessions[code]["heartbeats"][role] = time.time()
+    return jsonify({"ok": True})
+
+
+@app.route("/session/<code>/status", methods=["GET"])
+def session_status(code):
+    if code not in sessions:
+        return jsonify({"error": "session not found"}), 404
+    now = time.time()
+    hb = sessions[code]["heartbeats"]
+    engineer_alive = hb["engineer"] is not None and now - hb["engineer"] < HEARTBEAT_TTL
+    artist_alive = hb["artist"] is not None and now - hb["artist"] < HEARTBEAT_TTL
+    return jsonify({
+        "engineer": engineer_alive,
+        "artist": artist_alive,
+        "both_alive": engineer_alive and artist_alive,
+    })
 
 
 @app.route("/session/<code>", methods=["DELETE"])
