@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <thread>
 #include "ArtistScreen.h"
 #include "EngineerScreen.h"
 
@@ -45,14 +46,14 @@ public:
         g.setColour (colour);
         g.drawRoundedRectangle (0.5f, 0.5f, width - 1.0f, height - 1.0f, 6.0f, 1.0f);
     }
-
 };
 
 //==============================================================================
-class RoleSelectScreen : public juce::Component
+class RoleSelectScreen : public juce::Component,
+                         public juce::TextEditor::Listener
 {
 public:
-    std::function<void()> onJoin;
+    std::function<void(const juce::String&)> onJoin;
 
     RoleSelectScreen()
     {
@@ -73,6 +74,7 @@ public:
         sessionCodeEditor.setCaretVisible (true);
         sessionCodeEditor.setFont (juce::Font (juce::FontOptions (15.0f)));
         sessionCodeEditor.setJustification (juce::Justification::centred);
+        sessionCodeEditor.addListener (this);
         addAndMakeVisible (sessionCodeEditor);
 
         joinButton.setButtonText ("Join session");
@@ -80,8 +82,14 @@ public:
         joinButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF17805E));
         joinButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFF0F0F8));
         joinButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFF0F0F8));
-        joinButton.onClick = [this] { if (onJoin) onJoin(); };
+        joinButton.onClick = [this] { doJoinSession(); };
         addAndMakeVisible (joinButton);
+
+        errorLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
+        errorLabel.setColour (juce::Label::textColourId, juce::Colour (0xFFFF4F4F));
+        errorLabel.setJustificationType (juce::Justification::centred);
+        errorLabel.setVisible (false);
+        addAndMakeVisible (errorLabel);
     }
 
     ~RoleSelectScreen() override
@@ -103,20 +111,124 @@ public:
 
     void resized() override
     {
-        int w   = getWidth();
-        int cx  = (w - 240) / 2;
+        int w  = getWidth();
+        int cx = (w - 240) / 2;
 
-        subtitleLabel.setBounds (0, 228, w, 22);
+        subtitleLabel.setBounds (0,  228, w,   22);
         sessionCodeEditor.setBounds (cx, 266, 240, 46);
         joinButton.setBounds        (cx, 328, 240, 46);
+        errorLabel.setBounds        (0,  382, w,   22);
     }
 
-private:
-    TakeLookAndFeel  laf;
+    // juce::TextEditor::Listener
+    void textEditorTextChanged (juce::TextEditor& editor) override
+    {
+        if (isFormattingCode) return;
+        isFormattingCode = true;
 
+        const juce::String sep = " " + juce::String::charToString ((juce::juce_wchar) 0x00B7) + " ";
+
+        juce::String raw;
+        for (auto c : editor.getText().toUpperCase())
+            if (juce::CharacterFunctions::isLetterOrDigit (c) && raw.length() < 6)
+                raw += c;
+
+        juce::String formatted;
+        const int len = raw.length();
+        if (len <= 2)
+            formatted = raw;
+        else if (len <= 4)
+            formatted = raw.substring (0, 2) + sep + raw.substring (2);
+        else
+            formatted = raw.substring (0, 2) + sep + raw.substring (2, 4) + sep + raw.substring (4);
+
+        editor.setText (formatted, juce::dontSendNotification);
+        editor.moveCaretToEnd();
+
+        isFormattingCode = false;
+    }
+
+    void textEditorReturnKeyPressed (juce::TextEditor&) override { doJoinSession(); }
+
+private:
+    void doJoinSession()
+    {
+        // Strip separators to get raw 6-char code
+        juce::String raw;
+        for (auto c : sessionCodeEditor.getText().toUpperCase())
+            if (juce::CharacterFunctions::isLetterOrDigit (c) && raw.length() < 6)
+                raw += c;
+
+        if (raw.length() < 6)
+        {
+            errorLabel.setText ("Enter a 6-character code", juce::dontSendNotification);
+            errorLabel.setVisible (true);
+            return;
+        }
+
+        // Pick first LAN address
+        juce::String localIP = "127.0.0.1";
+        for (auto& addr : juce::IPAddress::getAllAddresses())
+        {
+            auto s = addr.toString();
+            if (s.startsWith ("192.168.") || s.startsWith ("10.") || s.startsWith ("172."))
+            {
+                localIP = s;
+                break;
+            }
+        }
+
+        joinButton.setEnabled (false);
+        errorLabel.setVisible (false);
+
+        juce::Component::SafePointer<RoleSelectScreen> safeThis (this);
+        juce::String code = raw;
+        juce::String ip   = localIP;
+
+        std::thread ([safeThis, code, ip]() mutable
+        {
+            juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
+
+            auto stream = juce::URL ("http://192.0.2.10:5010/session/join")
+                              .withPOSTData (body)
+                              .createInputStream (
+                                  juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                      .withExtraHeaders ("Content-Type: application/json")
+                                      .withConnectionTimeoutMs (5000));
+
+            bool         success    = false;
+            juce::String engineerIP;
+
+            if (stream != nullptr)
+            {
+                auto json = juce::JSON::parse (stream->readEntireStreamAsString());
+                engineerIP = json["engineer_ip"].toString();
+                success    = engineerIP.isNotEmpty();
+            }
+
+            juce::MessageManager::callAsync ([safeThis, success, engineerIP]()
+            {
+                if (safeThis == nullptr) return;
+                safeThis->joinButton.setEnabled (true);
+                if (success)
+                {
+                    if (safeThis->onJoin) safeThis->onJoin (engineerIP);
+                }
+                else
+                {
+                    safeThis->errorLabel.setText ("Invalid code", juce::dontSendNotification);
+                    safeThis->errorLabel.setVisible (true);
+                }
+            });
+        }).detach();
+    }
+
+    TakeLookAndFeel  laf;
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
     juce::TextButton joinButton;
+    juce::Label      errorLabel;
+    bool             isFormattingCode { false };
 };
 
 //==============================================================================
@@ -133,7 +245,8 @@ public:
     void showScreen (Screen screen);
 
 private:
-    Screen currentScreen { Screen::ROLE_SELECT };
+    Screen      currentScreen { Screen::ROLE_SELECT };
+    juce::String engineerIP;
     std::unique_ptr<juce::Component> screenComponent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

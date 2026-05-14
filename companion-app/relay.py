@@ -125,16 +125,14 @@ def end_session(code):
 
 
 # Maps UI knob keys → cue_receiver.py param names.
-# Keys absent from this map (revMix, delMix, ratio) have no DSP equivalent
-# and are intentionally dropped rather than forwarded as unknown names.
 _CUE_PARAM_MAP = {
-    "rev":    "reverb",
-    "revMix": "reverbMix",
-    "del":    "delay",
-    "delMix": "delayMix",
-    "comp":   "compression",
-    "vol":    "volume",
-    # "ratio" intentionally absent — hardcoded to 4.0 in DSP
+    "rev":    "reverb",       # room size  → Reverb.room_size
+    "revMix": "reverbMix",    # wet/dry    → Reverb.wet_level / dry_level
+    "del":    "delay",        # time       → Delay.delay_seconds
+    "delMix": "delayMix",     # wet/dry    → Delay.mix
+    "comp":   "compression",  # threshold  → stored, DSP pass-through for now
+    "vol":    "volume",       # output gain
+    # "ratio" absent — no backing state in UI or DSP
 }
 
 

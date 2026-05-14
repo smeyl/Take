@@ -5,7 +5,7 @@ import time
 import threading
 import requests
 
-RELAY_URL = "http://192.0.2.10:5010"
+RELAY_URL = "http://127.0.0.1:5010"
 
 import watcher
 import artist

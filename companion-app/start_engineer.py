@@ -14,7 +14,7 @@ import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
 from reaper import BASE
 
-RELAY_URL = "http://192.0.2.10:5010"
+RELAY_URL = "http://127.0.0.1:5010"
 TRANSPORT_PORT = 5004
 STREAM_PORT = 5002
 CHUNK = 1024

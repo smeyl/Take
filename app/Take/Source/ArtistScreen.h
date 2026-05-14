@@ -30,7 +30,6 @@ class ArtistScreen : public juce::Component
     class RecordRing : public juce::Component
     {
     public:
-        std::function<void()> onClick;
         bool isRecording { false };
         int  takeNumber  { 1 };
 
@@ -72,11 +71,6 @@ class ArtistScreen : public juce::Component
             g.drawText ("T" + juce::String (takeNumber),
                         getLocalBounds().translated (0, 16),
                         juce::Justification::centred);
-        }
-
-        void mouseUp (const juce::MouseEvent&) override
-        {
-            if (onClick) onClick();
         }
 
         bool hitTest (int x, int y) override
@@ -370,14 +364,12 @@ class ArtistScreen : public juce::Component
             g.setColour (juce::Colour (0xFF222228));
             g.drawHorizontalLine (0, 0.0f, (float) getWidth());
 
-            // Current section — blue, left side
             int leftW = b.getWidth() / 2;
             g.setFont (TakeUI::monoFont (14.0f, true));
             g.setColour (juce::Colour (0xFF4F8FFF));
             g.drawText ("Chorus", b.getX() + 12, b.getY(), leftW - 12, b.getHeight(),
                         juce::Justification::centredLeft);
 
-            // Next section — muted, right side
             g.setFont (TakeUI::monoFont (10.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText ("Next: Verse 2  ~14s", b.getX() + leftW, b.getY(), leftW - 12, b.getHeight(),
@@ -385,6 +377,51 @@ class ArtistScreen : public juce::Component
         }
 
         void resized() override {}
+    };
+
+    //==========================================================================
+    class StatusPoller : public juce::Thread
+    {
+    public:
+        std::function<void(bool, bool, int)> onResult;  // (connected, recording, take)
+
+        StatusPoller() : juce::Thread ("TakeStatusPoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                bool connected = false;
+                bool recording = false;
+                int  take      = 1;
+
+                auto stream = juce::URL ("http://localhost:5004/status")
+                                  .createInputStream (
+                                      juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                          .withConnectionTimeoutMs (1500));
+
+                if (stream != nullptr)
+                {
+                    connected = true;
+                    auto json = juce::JSON::parse (stream->readEntireStreamAsString());
+                    if (json.isObject())
+                    {
+                        recording = (bool) json["recording"];
+                        take      = (int)  json["take"];
+                    }
+                }
+
+                // Copy callback by value so the lambda doesn't reference this thread object
+                auto cb = onResult;
+                if (cb)
+                    juce::MessageManager::callAsync ([cb, connected, recording, take]() mutable
+                    {
+                        cb (connected, recording, take);
+                    });
+
+                wait (2000);
+            }
+        }
     };
 
 public:
@@ -404,25 +441,40 @@ public:
         };
 
         addAndMakeVisible (recordRing);
-        recordRing.onClick = [this]
-        {
-            recordRing.isRecording = !recordRing.isRecording;
-            if (!recordRing.isRecording)
-                recordRing.takeNumber++;
-            recordRing.repaint();
-            repaint();
-        };
-
         addAndMakeVisible (levelMeter);
         levelMeter.setLevel (-18.0f, -22.0f);
 
         addAndMakeVisible (trackWindow);
         addAndMakeVisible (sectionNow);
         addAndMakeVisible (cueMixPanel);
+
+        // Wire status poll results back to UI components via SafePointer
+        juce::Component::SafePointer<ArtistScreen> safeThis (this);
+        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->companionConnected   = connected;
+            safeThis->recordRing.isRecording = recording;
+            safeThis->recordRing.takeNumber  = take;
+            safeThis->recordRing.repaint();
+            safeThis->repaint();
+        };
+        statusPoller.startThread();
+    }
+
+    ~ArtistScreen() override
+    {
+        statusPoller.stopThread (3000);
     }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
     void setLevel       (float l, float r)          { levelMeter.setLevel (l, r); }
+
+    void setEngineerIP (const juce::String& ip)
+    {
+        engineerConnected = ip.isNotEmpty();
+        repaint();
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -502,7 +554,6 @@ private:
         return { 12, getHeight() - 28, 44, 20 };
     }
 
-    // Details button lives in the status bar
     juce::Rectangle<int> detailsBtnBounds() const
     {
         return { contentWidth() - 58, getHeight() - 29, 44, 26 };
@@ -513,7 +564,6 @@ private:
         g.setColour (juce::Colour (0xFF1E1E24));
         g.fillRect (0, 43, getWidth(), 1);
 
-        // TAKE wordmark — "T" white, "AKE" green
         g.setFont (TakeUI::monoFont (16.0f, true));
         {
             const char* const  kL[] = { "T", "A", "K", "E", nullptr };
@@ -527,7 +577,6 @@ private:
             }
         }
 
-        // Session code pill — right-aligned in header
         {
             auto pill = juce::Rectangle<int> (contentWidth() - 102, 11, 90, 22);
             g.setColour (juce::Colour (0xFF18181C));
@@ -544,9 +593,9 @@ private:
     {
         struct Dot { const char* label; bool on; int approxW; };
         const Dot dots[] = {
-            { "Companion", true,  64 },
-            { "Server",    true,  44 },
-            { "Engineer",  false, 58 },
+            { "Companion", companionConnected, 64 },
+            { "Server",    companionConnected, 44 },
+            { "Engineer",  engineerConnected,  58 },
         };
 
         constexpr int kPad = 14, kDot = 6, kGap = 5, kBetween = 16;
@@ -598,12 +647,10 @@ private:
         g.setColour (juce::Colour (0xFF1A1A20));
         g.drawHorizontalLine (barY, 0.0f, (float) getWidth());
 
-        // Back button — left side
         g.setFont (TakeUI::monoFont (10.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         g.drawText ("<- Back", 12, barY, 44, 32, juce::Justification::centredLeft);
 
-        // Details button — right side
         {
             auto db = detailsBtnBounds();
             g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
@@ -622,7 +669,9 @@ private:
                     juce::Justification::centredLeft);
     }
 
-    bool          detailsVisible { false };
+    bool          detailsVisible     { false };
+    bool          companionConnected { false };
+    bool          engineerConnected  { false };
     DetailsPanel  detailsPanel;
     juce::String  sessionCode { TakeUI::generateSessionCode() };
     RecordRing    recordRing;
@@ -630,6 +679,7 @@ private:
     TrackWindow   trackWindow;
     SectionNowCard sectionNow;
     CueMixPanel   cueMixPanel;
+    StatusPoller  statusPoller;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };

@@ -255,7 +255,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             {[
               { label: "REVERB",      color: C.purple, keys: [["Size", "rev"],       ["Mix", "revMix"]] },
               { label: "DELAY",       color: C.teal,   keys: [["Time", "del"],       ["Mix", "delMix"]] },
-              { label: "COMPRESSION", color: C.amber,  keys: [["Threshold", "comp"], ["Ratio", "ratio"]] },
+              { label: "COMPRESSION", color: C.amber,  keys: [["Threshold", "comp"]] },
             ].map(({ label, color, keys }) => (
               <div key={label}>
                 <div className="group-label">

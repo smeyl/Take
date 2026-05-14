@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import numpy as np
+from pedalboard import Pedalboard, Reverb, Delay, Compressor
 
 PORT = 5003
 CHUNK = 1024
@@ -10,75 +11,46 @@ RATE = 44100
 params = {"reverb": 0, "reverbMix": 0, "delay": 0, "delayMix": 0, "compression": 0, "volume": 100}
 stop_event = threading.Event()
 
-# ── Delay line ────────────────────────────────────────────────────────────────
-_DELAY_MAX = RATE * 2                    # 2-second circular buffer (88200 samples)
-_delay_buf = np.zeros(_DELAY_MAX, dtype=np.float32)
-_delay_pos = 0
-
-# ── Reverb (single comb filter, 50 ms) ───────────────────────────────────────
-_COMB_DELAY = 2205                       # 50 ms at 44100 Hz; > CHUNK so fully vectorised
-_comb_buf   = np.zeros(_COMB_DELAY, dtype=np.float32)
-_comb_pos   = 0
-
-
-def _buf_read(buf, pos, n):
-    d   = len(buf)
-    pos = int(pos) % d
-    end = pos + n
-    if end <= d:
-        return buf[pos:end].copy()
-    split = d - pos
-    return np.concatenate([buf[pos:], buf[:n - split]])
-
-
-def _buf_write(buf, pos, data):
-    d   = len(buf)
-    pos = int(pos) % d
-    n   = len(data)
-    end = pos + n
-    if end <= d:
-        buf[pos:end] = data
-    else:
-        split = d - pos
-        buf[pos:]       = data[:split]
-        buf[:n - split] = data[split:]
-
+# Persistent effects — module-level so reverb tail and delay buffer survive between chunks
+_compressor = Compressor(threshold_db=0.0, ratio=4.0, attack_ms=10.0, release_ms=100.0)
+_reverb     = Reverb(room_size=0.1, wet_level=0.0, dry_level=1.0, damping=0.5, freeze_mode=0.0)
+_delay      = Delay(delay_seconds=0.01, feedback=0.3, mix=0.0)
+_board      = Pedalboard([_compressor, _reverb, _delay])
 
 _call_count = 0
 
 
 def process_audio(raw_int16):
-    global _delay_pos, _comb_pos, _call_count
+    global _call_count
     _call_count += 1
     if _call_count % 100 == 0:
         print(f"DSP #{_call_count}: rev={params['reverb']} revMix={params['reverbMix']} "
               f"del={params['delay']} delMix={params['delayMix']} vol={params['volume']}", flush=True)
 
-    samples = raw_int16.astype(np.float32) / 32768.0   # → [-1.0, 1.0]
+    # Update effect attributes in-place — preserves internal buffer state across chunks
+    _compressor.threshold_db = -40.0 + (params["compression"] / 100.0) * 40.0
+    _compressor.ratio        = 4.0
+    _compressor.attack_ms    = 10.0
+    _compressor.release_ms   = 100.0
 
-    # Volume
-    samples = samples * (params["volume"] / 100.0)
+    _reverb.room_size   = 0.1 + (params["reverb"] / 100.0) * 0.9
+    _reverb.wet_level   = params["reverbMix"] / 100.0
+    _reverb.dry_level   = 1.0 - params["reverbMix"] / 100.0
+    _reverb.damping     = 0.5
+    _reverb.freeze_mode = 0.0
 
-    # Delay — always write to buffer so enabling delay mid-session sounds natural
-    delay_samples = int(params["delay"] / 100.0 * RATE)
-    delayed = _buf_read(_delay_buf, _delay_pos - delay_samples, len(samples))
-    _buf_write(_delay_buf, _delay_pos, samples)
-    _delay_pos = (_delay_pos + len(samples)) % _DELAY_MAX
-    delay_mix = params["delayMix"] / 100.0
-    if delay_mix > 0:
-        samples = samples * (1.0 - delay_mix) + delayed * delay_mix
+    _delay.delay_seconds = max(0.01, params["delay"] / 100.0)
+    _delay.feedback      = 0.3
+    _delay.mix           = params["delayMix"] / 100.0
 
-    # Reverb — single comb filter; skip entirely when mix is 0
-    reverb_mix = params["reverbMix"] / 100.0
-    if reverb_mix > 0:
-        feedback = 0.5 + (params["reverb"] / 100.0) * 0.4
-        prev     = _buf_read(_comb_buf, _comb_pos, len(samples))
-        comb_out = samples + feedback * prev
-        _buf_write(_comb_buf, _comb_pos, comb_out)
-        _comb_pos = (_comb_pos + len(samples)) % _COMB_DELAY
-        samples = samples * (1.0 - reverb_mix) + comb_out * reverb_mix
+    audio_2d  = raw_int16.astype(np.float32) / 32768.0
+    audio_2d  = audio_2d.reshape(1, -1)
+    processed = _board(audio_2d, sample_rate=RATE)  # (1, n_samples) float32
+    result    = processed[0]
 
-    return (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+    result *= params["volume"] / 100.0
+
+    return (np.clip(result, -1.0, 1.0) * 32767.0).astype(np.int16)
 
 
 # ── Network listener ──────────────────────────────────────────────────────────
@@ -99,15 +71,15 @@ def listen_for_cues():
             if name == "volume":
                 print(f"  volume     → {value/100:.2f}x", flush=True)
             elif name == "reverb":
-                print(f"  reverb     → size {value}", flush=True)
+                print(f"  reverb     → room {value/100*0.9:.2f}", flush=True)
             elif name == "reverbMix":
                 print(f"  reverb     → mix {value/100:.2f}", flush=True)
             elif name == "delay":
-                print(f"  delay      → {int(value/100*1000)}ms", flush=True)
+                print(f"  delay      → {value/100:.2f}s", flush=True)
             elif name == "delayMix":
                 print(f"  delay      → mix {value/100:.2f}", flush=True)
             elif name == "compression":
-                print(f"  comp       → {value} (pass-through)", flush=True)
+                print(f"  comp       → {value} (unused)", flush=True)
         except socket.timeout:
             continue
         except Exception as e:
