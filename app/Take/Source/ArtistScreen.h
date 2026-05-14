@@ -708,6 +708,9 @@ public:
         {
             heartbeatThread.setParams ("192.0.2.10", code);
             heartbeatThread.startThread();
+
+            juce::File ("/tmp/take_session.json")
+                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code + "\"}");
         }
 
         repaint();

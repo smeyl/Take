@@ -1,3 +1,5 @@
+import json
+import os
 import signal
 import socket
 import sys
@@ -22,6 +24,7 @@ from watcher import WATCH_PATH
 
 STREAM_PORT = 5002
 FILE_PORT = 5001
+SESSION_FILE = "/tmp/take_session.json"
 
 
 def get_local_ip():
@@ -60,13 +63,34 @@ def run_heartbeat(relay_url, code, stop_evt, on_dead):
         stop_evt.wait(5)
 
 
-if __name__ == "__main__":
-    code = input("Enter session code: ")
-    local_ip = get_local_ip()
+def _read_session_file():
+    for _ in range(120):
+        if os.path.exists(SESSION_FILE):
+            try:
+                with open(SESSION_FILE) as f:
+                    data = json.load(f)
+                os.unlink(SESSION_FILE)
+                ip = data.get("engineer_ip", "")
+                code = data.get("code", "")
+                if ip and code:
+                    return ip, code
+            except Exception:
+                pass
+        time.sleep(1)
+    return None, None
 
-    resp = requests.post(f"{RELAY_URL}/session/join", json={"code": code, "ip": local_ip})
-    resp.raise_for_status()
-    TARGET_IP = resp.json()["engineer_ip"]
+
+if __name__ == "__main__":
+    print("Waiting for session code from JUCE app...", flush=True)
+    TARGET_IP, code = _read_session_file()
+
+    if TARGET_IP is None:
+        code = input("Enter session code: ")
+        local_ip = get_local_ip()
+        resp = requests.post(f"{RELAY_URL}/session/join", json={"code": code, "ip": local_ip})
+        resp.raise_for_status()
+        TARGET_IP = resp.json()["engineer_ip"]
+
     print(f"Engineer found — {TARGET_IP}")
 
     watcher.TARGET_IP = TARGET_IP
