@@ -354,7 +354,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
           <span style={{ marginRight: 4 }}>Takes</span><span style={{ color: C.body }}>{takeCount > 0 ? `T${takeCount}` : "—"}</span>
         </div>
       </div>
-      {showDetails && <DetailsPanel onClose={() => setShowDetails(false)} recording={recording} />}
+      {showDetails && <DetailsPanel onClose={() => setShowDetails(false)} sessionCode={sessionCode} />}
     </div>
   );
 }

@@ -65,7 +65,7 @@ public:
         subtitleLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (subtitleLabel);
 
-        sessionCodeEditor.setTextToShowWhenEmpty (juce::CharPointer_UTF8 ("A7 \xc2\xb7 F2 \xc2\xb7 K9"),
+        sessionCodeEditor.setTextToShowWhenEmpty ("A7 - F2 - K9",
                                                   juce::Colour (0xFF3A3A45));
         sessionCodeEditor.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
         sessionCodeEditor.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
@@ -126,7 +126,7 @@ public:
         if (isFormattingCode) return;
         isFormattingCode = true;
 
-        const juce::String sep = " " + juce::String::charToString ((juce::juce_wchar) 0x00B7) + " ";
+        const juce::String sep = " - ";
 
         juce::String raw;
         for (auto c : editor.getText().toUpperCase())
@@ -181,46 +181,93 @@ private:
         joinButton.setEnabled (false);
         errorLabel.setVisible (false);
 
-        juce::Component::SafePointer<RoleSelectScreen> safeThis (this);
+        // Capture only value types and the onJoin callback - no "this" or SafePointer.
+        // onJoin is owned by MainComponent which outlives the request, so it's safe to
+        // call even if RoleSelectScreen has been destroyed by the time the thread finishes.
         juce::String code = raw;
         juce::String ip   = localIP;
+        auto cb = onJoin;
 
-        std::thread ([safeThis, code, ip]() mutable
+        std::thread ([code, ip, cb]() mutable
         {
-            juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
-
-            auto stream = juce::URL ("http://192.0.2.10:5010/session/join")
-                              .withPOSTData (body)
-                              .createInputStream (
-                                  juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                                      .withExtraHeaders ("Content-Type: application/json")
-                                      .withConnectionTimeoutMs (5000));
-
-            bool         success    = false;
             juce::String engineerIP;
+            const bool ok = rawHttpPost ("192.0.2.10", 5010, "/session/join",
+                                         "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}",
+                                         engineerIP);
 
-            if (stream != nullptr)
-            {
-                auto json = juce::JSON::parse (stream->readEntireStreamAsString());
-                engineerIP = json["engineer_ip"].toString();
-                success    = engineerIP.isNotEmpty();
-            }
-
-            juce::MessageManager::callAsync ([safeThis, success, engineerIP]()
-            {
-                if (safeThis == nullptr) return;
-                safeThis->joinButton.setEnabled (true);
-                if (success)
+            if (ok && cb)
+                juce::MessageManager::callAsync ([cb, engineerIP]()
                 {
-                    if (safeThis->onJoin) safeThis->onJoin (engineerIP);
-                }
-                else
-                {
-                    safeThis->errorLabel.setText ("Invalid code", juce::dontSendNotification);
-                    safeThis->errorLabel.setVisible (true);
-                }
-            });
+                    cb (engineerIP);
+                });
         }).detach();
+    }
+
+    // POSIX HTTP POST - avoids juce::URL which fires internal assertions on connection failure.
+    static bool rawHttpPost (const char* host, int port, const char* path,
+                             const juce::String& jsonBody, juce::String& responseIP)
+    {
+        DBG ("rawHttpPost called: " + juce::String (host) + ":" + juce::String (port));
+
+        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return false;
+
+        struct timeval tv { 5, 0 };
+        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons ((uint16_t) port);
+        ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+        {
+            ::close (fd);
+            return false;
+        }
+
+        const char* bodyPtr = jsonBody.toRawUTF8();
+        const int   bodyLen = (int) ::strlen (bodyPtr);
+
+        char header[512];
+        ::snprintf (header, sizeof (header),
+                    "POST %s HTTP/1.0\r\n"
+                    "Host: %s\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: %d\r\n"
+                    "Connection: close\r\n"
+                    "\r\n",
+                    path, host, bodyLen);
+        ::send (fd, header, ::strlen (header), 0);
+        ::send (fd, bodyPtr, (size_t) bodyLen, 0);
+
+        juce::MemoryBlock buf;
+        char    tmp[512];
+        ssize_t n;
+        while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+            buf.append (tmp, (size_t) n);
+        ::close (fd);
+
+        DBG ("rawHttpPost: recv loop done, buf.getSize()=" + juce::String ((int) buf.getSize()));
+        if (buf.getSize() == 0) return false;
+
+        DBG ("rawHttpPost: constructing juce::String from buf");
+        juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
+
+        int sep = full.indexOf ("\r\n\r\n");
+        DBG ("rawHttpPost: header sep=" + juce::String (sep));
+        if (sep < 0) return false;
+
+        DBG ("rawHttpPost: constructing body substring");
+        juce::String body = full.substring (sep + 4).trim();
+        if (body.isEmpty()) return false;
+
+        DBG ("rawHttpPost: parsing JSON: " + body);
+        auto json = juce::JSON::parse (body);
+        responseIP = json["engineer_ip"].toString();
+        DBG ("rawHttpPost: engineer_ip=" + responseIP);
+        return responseIP.isNotEmpty();
     }
 
     TakeLookAndFeel  laf;

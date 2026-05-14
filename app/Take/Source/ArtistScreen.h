@@ -1,6 +1,10 @@
 #pragma once
 #include <JuceHeader.h>
 #include "DetailsPanel.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 //==============================================================================
 namespace TakeUI
@@ -18,8 +22,7 @@ namespace TakeUI
             return juce::String::charToString ((juce::juce_wchar) ('A' + rng.nextInt (26)))
                    + juce::String (rng.nextInt (10));
         };
-        juce::String dot = juce::String::charToString ((juce::juce_wchar) 0x00B7);
-        return pair() + " " + dot + " " + pair() + " " + dot + " " + pair();
+        return pair() + " - " + pair() + " - " + pair();
     }
 }
 
@@ -395,15 +398,11 @@ class ArtistScreen : public juce::Component
                 bool recording = false;
                 int  take      = 1;
 
-                auto stream = juce::URL ("http://localhost:5004/status")
-                                  .createInputStream (
-                                      juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
-                                          .withConnectionTimeoutMs (1500));
-
-                if (stream != nullptr)
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5004, "/status", body))
                 {
                     connected = true;
-                    auto json = juce::JSON::parse (stream->readEntireStreamAsString());
+                    auto json = juce::JSON::parse (body);
                     if (json.isObject())
                     {
                         recording = (bool) json["recording"];
@@ -421,6 +420,59 @@ class ArtistScreen : public juce::Component
 
                 wait (2000);
             }
+        }
+
+    private:
+        // Plain POSIX TCP request - avoids juce::URL which fires assertions on connection failure
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            DBG ("rawHttpGet called: " + juce::String (host) + ":" + juce::String (port));
+
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 2, 0 };
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            DBG ("rawHttpGet: recv loop done, buf.getSize()=" + juce::String ((int) buf.getSize()));
+            if (buf.getSize() == 0) return false;
+
+            DBG ("rawHttpGet: constructing juce::String from buf");
+            juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
+
+            int sep = full.indexOf ("\r\n\r\n");
+            DBG ("rawHttpGet: header sep=" + juce::String (sep));
+            if (sep < 0) return false;
+
+            DBG ("rawHttpGet: constructing body substring");
+            body = full.substring (sep + 4).trim();
+            DBG ("rawHttpGet: body=" + body);
+            return body.isNotEmpty();
         }
     };
 
@@ -473,6 +525,7 @@ public:
     void setEngineerIP (const juce::String& ip)
     {
         engineerConnected = ip.isNotEmpty();
+        detailsPanel.setEngineerConnected (engineerConnected);
         repaint();
     }
 

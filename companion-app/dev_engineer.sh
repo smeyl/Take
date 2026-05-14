@@ -9,4 +9,9 @@ trap cleanup EXIT
 python3 relay.py &
 RELAY_PID=$!
 sleep 1
-python3 start_engineer.py
+python3 start_engineer.py 2>>/tmp/take_engineer_error.log
+
+if [ -s /tmp/take_engineer_error.log ]; then
+    echo "=== Engineer errors ==="
+    cat /tmp/take_engineer_error.log
+fi

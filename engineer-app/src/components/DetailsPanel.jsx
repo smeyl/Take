@@ -1,14 +1,101 @@
+import { useState, useEffect } from "react";
 import C from "../constants/colors";
 
-export default function DetailsPanel({ onClose, recording }) {
-  const logs = [
-    { t: "14:51:03", msg: "Session started — A7·F2·K9", cls: "info" },
-    { t: "14:51:09", msg: "Artist app connected", cls: "ok" },
-    { t: "14:53:22", msg: "Backing track sent (8.2MB)", cls: "info" },
-    { t: "14:55:58", msg: "T4 sync complete — swap 0.4s", cls: "ok" },
-    { t: "14:56:20", msg: "Recording started — T5", cls: "" },
-    ...(recording ? [{ t: "14:56:52", msg: "T5 recording — 0:32 elapsed", cls: "warn" }] : []),
+const RELAY         = "http://localhost:5010";
+const FILE_RECEIVER = "http://localhost:5001";
+const TRANSPORT     = "http://localhost:5004";
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  return Math.round(bytes / 1024) + " KB";
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return "--:--:--";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+export default function DetailsPanel({ onClose, sessionCode }) {
+  const [conns, setConns] = useState({
+    relay: false, file: false, artist: false,
+    reaper: false, transport: false,
+  });
+  const [takes, setTakes] = useState([]);
+
+  useEffect(() => {
+    const poll = async () => {
+      // Relay: any 200 from /session/active
+      let relay = false;
+      try {
+        const r = await fetch(`${RELAY}/session/active`, { signal: AbortSignal.timeout(2000) });
+        relay = r.ok;
+      } catch {}
+
+      // File receiver: any HTTP response means it's up
+      let file = false;
+      try {
+        await fetch(FILE_RECEIVER, { signal: AbortSignal.timeout(2000) });
+        file = true;
+      } catch {}
+
+      // Artist: present field in session status
+      let artist = false;
+      if (sessionCode) {
+        try {
+          const r = await fetch(`${RELAY}/session/${sessionCode}/status`, { signal: AbortSignal.timeout(2000) });
+          if (r.ok) artist = Boolean((await r.json()).artist);
+        } catch {}
+      }
+
+      // Reaper: reachable field
+      let reaper = false;
+      try {
+        const r = await fetch(`${RELAY}/reaper/status`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) reaper = Boolean((await r.json()).reachable);
+      } catch {}
+
+      // Transport: any response
+      let transport = false;
+      try {
+        await fetch(`${TRANSPORT}/status`, { signal: AbortSignal.timeout(2000) });
+        transport = true;
+      } catch {}
+
+      setConns({ relay, file, artist, reaper, transport });
+
+      // Takes for activity log + bandwidth totals
+      try {
+        const r = await fetch(`${FILE_RECEIVER}/takes`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) setTakes(await r.json());
+      } catch {}
+    };
+
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [sessionCode]);
+
+  // Newest 20 entries at top
+  const activityLog = takes
+    .slice(-20)
+    .reverse()
+    .map(t => ({
+      time: fmtTime(t.time),
+      msg:  `${t.name} received — ${fmtSize(t.size)}`,
+    }));
+
+  const totalMB = (takes.reduce((s, t) => s + (t.size || 0), 0) / 1024 / 1024).toFixed(1);
+
+  const connRows = [
+    ["Relay",     conns.relay],
+    ["File recv", conns.file],
+    ["Artist",    conns.artist],
+    ["Reaper",    conns.reaper],
+    ["Transport", conns.transport],
+    ["Timecode",  false],        // UDP — can't check via HTTP
   ];
+
   return (
     <div className="details-wrap">
       <div className="details-hdr">
@@ -16,32 +103,57 @@ export default function DetailsPanel({ onClose, recording }) {
         <div className="details-close" onClick={onClose}>×</div>
       </div>
       <div className="details-body">
+
         <div>
           <div className="sec-label" style={{ marginBottom: 8 }}>Connections</div>
           <div className="conn-grid">
-            {[["Plugin link", true], ["Relay server", true], ["Artist app", true], ["Reaper API", true], ["BlackHole 2ch", true], ["File watcher", true]].map(([name, ok]) => (
+            {connRows.map(([name, ok]) => (
               <div key={name} className="conn-tile">
-                <div className={`dot ${ok ? "g" : "r"}`} />
+                <div className={`dot ${ok ? "g" : "d"}`} />
                 <div className="conn-name">{name}</div>
-                <div className="conn-ok">{ok ? "OK" : "ERR"}</div>
+                <div className="conn-ok" style={{ color: ok ? C.green : C.dim }}>
+                  {ok ? "OK" : "—"}
+                </div>
               </div>
             ))}
           </div>
         </div>
+
         <div>
           <div className="sec-label" style={{ marginBottom: 8 }}>Activity</div>
           <div className="log-box">
-            {logs.map((l, i) => <div key={i} className="log-line"><span className="log-time">{l.t}</span><span className={`log-msg ${l.cls}`}>{l.msg}</span></div>)}
+            {activityLog.length === 0
+              ? <div className="log-line">
+                  <span className="log-msg" style={{ color: C.dim }}>No activity yet</span>
+                </div>
+              : activityLog.map((l, i) => (
+                  <div key={i} className="log-line">
+                    <span className="log-time">{l.time}</span>
+                    <span className="log-msg">{l.msg}</span>
+                  </div>
+                ))
+            }
           </div>
         </div>
+
         <div>
           <div className="sec-label" style={{ marginBottom: 8 }}>Bandwidth</div>
           <div className="bw-grid">
-            <div className="bw-tile"><div className="bw-lbl">Stream Up</div><div><span className="bw-val">0.8</span> <span className="bw-unit">Mbps</span></div></div>
-            <div className="bw-tile"><div className="bw-lbl">Stream Dn</div><div><span className="bw-val">0.4</span> <span className="bw-unit">Mbps</span></div></div>
-            <div className="bw-tile"><div className="bw-lbl">Total</div><div><span className="bw-val">214</span> <span className="bw-unit">MB</span></div></div>
+            <div className="bw-tile">
+              <div className="bw-lbl">Stream Up</div>
+              <div><span className="bw-val">—</span></div>
+            </div>
+            <div className="bw-tile">
+              <div className="bw-lbl">Stream Dn</div>
+              <div><span className="bw-val">—</span></div>
+            </div>
+            <div className="bw-tile">
+              <div className="bw-lbl">Total rcvd</div>
+              <div><span className="bw-val">{totalMB}</span> <span className="bw-unit">MB</span></div>
+            </div>
           </div>
         </div>
+
       </div>
     </div>
   );
