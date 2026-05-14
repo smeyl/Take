@@ -27,7 +27,8 @@ namespace TakeUI
 }
 
 //==============================================================================
-class ArtistScreen : public juce::Component
+class ArtistScreen : public juce::Component,
+                     public juce::Timer
 {
     //==========================================================================
     class RecordRing : public juce::Component
@@ -141,6 +142,9 @@ class ArtistScreen : public juce::Component
     class TrackWindow : public juce::Component
     {
     public:
+        float playheadPct  { 0.0f };
+        bool  backingLoaded { false };
+
         void paint (juce::Graphics& g) override
         {
             constexpr int kSectH = 28, kWaveH = 48;
@@ -209,6 +213,16 @@ class ArtistScreen : public juce::Component
             g.setColour (juce::Colour (0xFF0D0D0F));
             g.fillRect (b);
 
+            if (!backingLoaded)
+            {
+                g.setFont (TakeUI::monoFont (10.0f));
+                g.setColour (juce::Colour (0xFF3A3A48));
+                g.drawText ("Waiting for backing track...", b, juce::Justification::centred);
+                g.setColour (juce::Colour (0xFF1E1E24));
+                g.drawHorizontalLine (b.getY(), (float) b.getX(), (float) b.getRight());
+                return;
+            }
+
             float bx   = (float) b.getX();
             float bw   = (float) b.getWidth();
             float cy   = (float) b.getCentreY();
@@ -233,7 +247,7 @@ class ArtistScreen : public juce::Component
                 g.drawLine ((float) px, cy - hh, (float) px, cy + hh, 1.0f);
             }
 
-            float phX = bx + bw * 0.45f;
+            float phX = bx + bw * juce::jlimit (0.0f, 1.0f, playheadPct);
             g.setColour (juce::Colour (0xFF4F8FFF));
             g.drawLine (phX, (float) b.getY(), phX, (float) b.getBottom(), 1.5f);
 
@@ -453,6 +467,84 @@ class ArtistScreen : public juce::Component
     };
 
     //==========================================================================
+    class TimecodePoller : public juce::Thread
+    {
+    public:
+        std::function<void(float, bool)> onResult;  // (pos, playing)
+
+        TimecodePoller() : juce::Thread ("TakeTimecodePoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5010, "/timecode", body))
+                {
+                    auto json = juce::JSON::parse (body);
+                    if (json.isObject())
+                    {
+                        const float pos     = (float)(double) json["pos"];
+                        const bool  playing = (bool)          json["playing"];
+                        auto cb = onResult;
+                        if (cb)
+                            juce::MessageManager::callAsync ([cb, pos, playing]() mutable
+                            {
+                                cb (pos, playing);
+                            });
+                    }
+                }
+                wait (100);
+            }
+        }
+
+    private:
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 0, 200000 };  // 200ms — short timeout for fast local polling
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char    tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            if (buf.getSize() == 0) return false;
+
+            juce::String full = juce::String::fromUTF8 (
+                static_cast<const char*> (buf.getData()), (int) buf.getSize());
+            const int sep = full.indexOf ("\r\n\r\n");
+            if (sep < 0) return false;
+
+            body = full.substring (sep + 4).trim();
+            return body.isNotEmpty();
+        }
+    };
+
+    //==========================================================================
     class StatusPoller : public juce::Thread
     {
     public:
@@ -575,17 +667,30 @@ public:
         statusPoller.onResult = [safeThis] (bool connected, bool recording, int take)
         {
             if (safeThis == nullptr) return;
-            safeThis->serverConnected        = connected;   // 5004 transport responded
+            safeThis->serverConnected        = connected;
             safeThis->recordRing.isRecording = recording;
             safeThis->recordRing.takeNumber  = take;
             safeThis->recordRing.repaint();
             safeThis->repaint();
         };
         statusPoller.startThread();
+
+        timecodePoller.onResult = [safeThis] (float pos, bool /*playing*/)
+        {
+            if (safeThis == nullptr) return;
+            constexpr float kTotalDuration = 64.0f;
+            safeThis->trackWindow.playheadPct = pos / kTotalDuration;
+            safeThis->trackWindow.repaint();
+        };
+        timecodePoller.startThread();
+
+        startTimer (2000);   // backing track file check
     }
 
     ~ArtistScreen() override
     {
+        stopTimer();
+        timecodePoller.stopThread (500);
         heartbeatThread.stopThread (3000);
         statusPoller.stopThread (3000);
     }
@@ -606,6 +711,18 @@ public:
         }
 
         repaint();
+    }
+
+    void timerCallback() override
+    {
+        auto f = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
+                             .getChildFile ("Desktop/Take/companion-app/incoming/take_backing_track.mp3");
+        const bool found = f.existsAsFile();
+        if (found != trackWindow.backingLoaded)
+        {
+            trackWindow.backingLoaded = found;
+            trackWindow.repaint();
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -813,6 +930,7 @@ private:
     SectionNowCard  sectionNow;
     CueMixPanel     cueMixPanel;
     HeartbeatThread heartbeatThread;
+    TimecodePoller  timecodePoller;
     StatusPoller    statusPoller;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)

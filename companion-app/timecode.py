@@ -36,6 +36,12 @@ def sender(target_ip, stop_evt):
             sock.sendto(packet, (target_ip, PORT))
         except OSError:
             pass
+        try:
+            requests.post("http://127.0.0.1:5010/timecode",
+                          json={"pos": round(pos, 3), "playing": playing},
+                          timeout=0.04)
+        except requests.RequestException:
+            pass
         stop_evt.wait(0.05)
     sock.close()
 

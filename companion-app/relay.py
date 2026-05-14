@@ -18,6 +18,8 @@ SESSION_TTL = 24 * 3600
 HEARTBEAT_TTL = 15  # seconds before a role is considered dead
 sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 
+timecode_state = {"pos": 0.0, "playing": False}
+
 CHARS = string.ascii_uppercase + string.digits
 CUE_PORT = 5003
 
@@ -160,6 +162,19 @@ def cue_forward(param, value):
         sock.sendto(msg, (artist_ip, CUE_PORT))
     finally:
         sock.close()
+    return jsonify({"ok": True})
+
+
+@app.route("/timecode", methods=["GET"])
+def get_timecode():
+    return jsonify(timecode_state)
+
+
+@app.route("/timecode", methods=["POST"])
+def post_timecode():
+    data = request.get_json(force=True, silent=True) or {}
+    timecode_state["pos"]     = float(data.get("pos", 0.0))
+    timecode_state["playing"] = bool(data.get("playing", False))
     return jsonify({"ok": True})
 
 
