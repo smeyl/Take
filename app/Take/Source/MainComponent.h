@@ -53,7 +53,7 @@ class RoleSelectScreen : public juce::Component,
                          public juce::TextEditor::Listener
 {
 public:
-    std::function<void(const juce::String&)> onJoin;
+    std::function<void(const juce::String&, const juce::String&)> onJoin;  // (engineerIP, rawCode)
 
     RoleSelectScreen()
     {
@@ -196,9 +196,9 @@ private:
                                          engineerIP);
 
             if (ok && cb)
-                juce::MessageManager::callAsync ([cb, engineerIP]()
+                juce::MessageManager::callAsync ([cb, engineerIP, code]()
                 {
-                    cb (engineerIP);
+                    cb (engineerIP, code);
                 });
         }).detach();
     }
@@ -294,6 +294,7 @@ public:
 private:
     Screen      currentScreen { Screen::ROLE_SELECT };
     juce::String engineerIP;
+    juce::String rawCode;
     std::unique_ptr<juce::Component> screenComponent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

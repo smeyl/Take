@@ -10,6 +10,10 @@ import requests as _requests
 app = Flask(__name__)
 CORS(app)
 
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 SESSION_TTL = 24 * 3600
 HEARTBEAT_TTL = 15  # seconds before a role is considered dead
 sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}

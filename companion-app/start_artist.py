@@ -51,7 +51,7 @@ def run_heartbeat(relay_url, code, stop_evt, on_dead):
                     missed += 1
                     if engineer_was_alive is True:
                         print("⚠ Engineer disconnected", flush=True)
-                    if missed >= 2 and not stop_evt.is_set():
+                    if missed >= 5 and not stop_evt.is_set():
                         on_dead()
                         return
                 engineer_was_alive = engineer_alive

@@ -383,6 +383,76 @@ class ArtistScreen : public juce::Component
     };
 
     //==========================================================================
+    class HeartbeatThread : public juce::Thread
+    {
+    public:
+        HeartbeatThread() : juce::Thread ("TakeHeartbeat") {}
+
+        void setParams (const juce::String& host, const juce::String& code)
+        {
+            relayHost = host;
+            sessionCode = code;
+        }
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                if (relayHost.isNotEmpty() && sessionCode.isNotEmpty())
+                {
+                    juce::String path = "/session/" + sessionCode + "/heartbeat";
+                    sendPost (relayHost.toRawUTF8(), 5010, path.toRawUTF8());
+                }
+                wait (5000);
+            }
+        }
+
+    private:
+        juce::String relayHost;
+        juce::String sessionCode;
+
+        static void sendPost (const char* host, int port, const char* path)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return;
+
+            struct timeval tv { 3, 0 };
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return;
+            }
+
+            const char* body    = "{\"role\":\"artist\"}";
+            const int   bodyLen = (int) ::strlen (body);
+
+            char header[512];
+            ::snprintf (header, sizeof (header),
+                        "POST %s HTTP/1.0\r\n"
+                        "Host: %s\r\n"
+                        "Content-Type: application/json\r\n"
+                        "Content-Length: %d\r\n"
+                        "Connection: close\r\n"
+                        "\r\n",
+                        path, host, bodyLen);
+            ::send (fd, header, ::strlen (header), 0);
+            ::send (fd, body, (size_t) bodyLen, 0);
+
+            char tmp[64];
+            while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
+            ::close (fd);
+        }
+    };
+
+    //==========================================================================
     class StatusPoller : public juce::Thread
     {
     public:
@@ -505,7 +575,7 @@ public:
         statusPoller.onResult = [safeThis] (bool connected, bool recording, int take)
         {
             if (safeThis == nullptr) return;
-            safeThis->companionConnected   = connected;
+            safeThis->serverConnected        = connected;   // 5004 transport responded
             safeThis->recordRing.isRecording = recording;
             safeThis->recordRing.takeNumber  = take;
             safeThis->recordRing.repaint();
@@ -516,16 +586,25 @@ public:
 
     ~ArtistScreen() override
     {
+        heartbeatThread.stopThread (3000);
         statusPoller.stopThread (3000);
     }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
     void setLevel       (float l, float r)          { levelMeter.setLevel (l, r); }
 
-    void setEngineerIP (const juce::String& ip)
+    void setEngineerIP (const juce::String& ip, const juce::String& code)
     {
-        engineerConnected = ip.isNotEmpty();
+        companionConnected = ip.isNotEmpty();
+        engineerConnected  = ip.isNotEmpty();
         detailsPanel.setEngineerConnected (engineerConnected);
+
+        if (ip.isNotEmpty() && code.isNotEmpty())
+        {
+            heartbeatThread.setParams ("192.0.2.10", code);
+            heartbeatThread.startThread();
+        }
+
         repaint();
     }
 
@@ -647,7 +726,7 @@ private:
         struct Dot { const char* label; bool on; int approxW; };
         const Dot dots[] = {
             { "Companion", companionConnected, 64 },
-            { "Server",    companionConnected, 44 },
+            { "Server",    serverConnected,    44 },
             { "Engineer",  engineerConnected,  58 },
         };
 
@@ -722,17 +801,19 @@ private:
                     juce::Justification::centredLeft);
     }
 
-    bool          detailsVisible     { false };
-    bool          companionConnected { false };
-    bool          engineerConnected  { false };
-    DetailsPanel  detailsPanel;
-    juce::String  sessionCode { TakeUI::generateSessionCode() };
-    RecordRing    recordRing;
-    LevelMeter    levelMeter;
-    TrackWindow   trackWindow;
-    SectionNowCard sectionNow;
-    CueMixPanel   cueMixPanel;
-    StatusPoller  statusPoller;
+    bool            detailsVisible     { false };
+    bool            companionConnected { false };
+    bool            serverConnected    { false };
+    bool            engineerConnected  { false };
+    DetailsPanel    detailsPanel;
+    juce::String    sessionCode { TakeUI::generateSessionCode() };
+    RecordRing      recordRing;
+    LevelMeter      levelMeter;
+    TrackWindow     trackWindow;
+    SectionNowCard  sectionNow;
+    CueMixPanel     cueMixPanel;
+    HeartbeatThread heartbeatThread;
+    StatusPoller    statusPoller;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };
