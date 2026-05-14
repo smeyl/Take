@@ -706,7 +706,7 @@ public:
 
         if (ip.isNotEmpty() && code.isNotEmpty())
         {
-            heartbeatThread.setParams ("192.0.2.10", code);
+            heartbeatThread.setParams ("127.0.0.1", code);
             heartbeatThread.startThread();
 
             juce::File ("/tmp/take_session.json")

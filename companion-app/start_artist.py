@@ -86,10 +86,12 @@ if __name__ == "__main__":
 
     if TARGET_IP is None:
         code = input("Enter session code: ")
-        local_ip = get_local_ip()
-        resp = requests.post(f"{RELAY_URL}/session/join", json={"code": code, "ip": local_ip})
-        resp.raise_for_status()
-        TARGET_IP = resp.json()["engineer_ip"]
+
+    local_ip = get_local_ip()
+    resp = requests.post(f"{RELAY_URL}/session/join",
+                         json={"code": code, "ip": local_ip}, timeout=5)
+    resp.raise_for_status()
+    TARGET_IP = resp.json()["engineer_ip"]
 
     print(f"Engineer found — {TARGET_IP}")
 

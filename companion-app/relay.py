@@ -147,12 +147,11 @@ def cue_forward(param, value):
     dsp_name = _CUE_PARAM_MAP.get(param)
     if dsp_name is None:
         return jsonify({"ok": True, "dropped": True})  # no DSP equivalent
-    now = time.time()
-    recent = [(code, s) for code, s in sessions.items()
-              if now - s["created_at"] < ACTIVE_TTL]
-    if not recent:
+    joined = [(code, s) for code, s in sessions.items()
+              if s.get("engineer_ip") and s.get("artist_ip")]
+    if not joined:
         return jsonify({"error": "no active session"}), 404
-    _, s = max(recent, key=lambda x: x[1]["created_at"])
+    _, s = max(joined, key=lambda x: x[1]["created_at"])
     artist_ip = s.get("artist_ip")
     if not artist_ip:
         return jsonify({"error": "artist not connected"}), 404

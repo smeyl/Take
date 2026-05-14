@@ -17,16 +17,7 @@ _reverb     = Reverb(room_size=0.1, wet_level=0.0, dry_level=1.0, damping=0.5, f
 _delay      = Delay(delay_seconds=0.01, feedback=0.3, mix=0.0)
 _board      = Pedalboard([_compressor, _reverb, _delay])
 
-_call_count = 0
-
-
-def process_audio(raw_int16):
-    global _call_count
-    _call_count += 1
-    if _call_count % 100 == 0:
-        print(f"DSP #{_call_count}: rev={params['reverb']} revMix={params['reverbMix']} "
-              f"del={params['delay']} delMix={params['delayMix']} vol={params['volume']}", flush=True)
-
+def process_audio(samples):
     # Update effect attributes in-place — preserves internal buffer state across chunks
     _compressor.threshold_db = -40.0 + (params["compression"] / 100.0) * 40.0
     _compressor.ratio        = 4.0
@@ -43,14 +34,14 @@ def process_audio(raw_int16):
     _delay.feedback      = 0.3
     _delay.mix           = params["delayMix"] / 100.0
 
-    audio_2d  = raw_int16.astype(np.float32) / 32768.0
+    audio_2d  = samples.astype(np.float32) / 32768.0
     audio_2d  = audio_2d.reshape(1, -1)
-    processed = _board(audio_2d, sample_rate=RATE)  # (1, n_samples) float32
+    processed = _board(audio_2d, sample_rate=RATE, reset=False)  # (1, n_samples) float32
     result    = processed[0]
+    result   *= params["volume"] / 100.0
+    out       = (np.clip(result, -1.0, 1.0) * 32767.0).astype(np.int16)
 
-    result *= params["volume"] / 100.0
-
-    return (np.clip(result, -1.0, 1.0) * 32767.0).astype(np.int16)
+    return out
 
 
 # ── Network listener ──────────────────────────────────────────────────────────
