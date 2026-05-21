@@ -642,7 +642,7 @@ class ArtistScreen : public juce::Component,
     class StatusPoller : public juce::Thread
     {
     public:
-        std::function<void(bool, bool, int)> onResult;  // (connected, recording, take)
+        std::function<void(bool, bool, int, int)> onResult;  // (connected, recording, take, latencyMs)
 
         StatusPoller() : juce::Thread ("TakeStatusPoller") {}
 
@@ -653,10 +653,13 @@ class ArtistScreen : public juce::Component,
                 bool connected = false;
                 bool recording = false;
                 int  take      = 1;
+                int  latencyMs = 0;
 
                 juce::String body;
+                auto t0 = juce::Time::getMillisecondCounter();
                 if (rawHttpGet ("127.0.0.1", 5004, "/status", body))
                 {
+                    latencyMs = (int)(juce::Time::getMillisecondCounter() - t0);
                     connected = true;
                     auto json = juce::JSON::parse (body);
                     if (json.isObject())
@@ -669,9 +672,9 @@ class ArtistScreen : public juce::Component,
                 // Copy callback by value so the lambda doesn't reference this thread object
                 auto cb = onResult;
                 if (cb)
-                    juce::MessageManager::callAsync ([cb, connected, recording, take]() mutable
+                    juce::MessageManager::callAsync ([cb, connected, recording, take, latencyMs]() mutable
                     {
-                        cb (connected, recording, take);
+                        cb (connected, recording, take, latencyMs);
                     });
 
                 wait (2000);
@@ -758,12 +761,13 @@ public:
 
         // Wire status poll results back to UI components via SafePointer
         juce::Component::SafePointer<ArtistScreen> safeThis (this);
-        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take)
+        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take, int latencyMs)
         {
             if (safeThis == nullptr) return;
             safeThis->serverConnected        = connected;
             safeThis->recordRing.isRecording = recording;
             safeThis->recordRing.takeNumber  = take;
+            safeThis->latencyMs              = latencyMs;
             safeThis->recordRing.repaint();
             safeThis->repaint();
         };
@@ -1008,8 +1012,8 @@ private:
 
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
-        auto text = juce::String ("Latency 0ms  |  Take T")
-                    + juce::String (recordRing.takeNumber)
+        auto text = juce::String ("Latency ") + juce::String (latencyMs) + "ms"
+                    + "  |  Take T" + juce::String (recordRing.takeNumber)
                     + "  |  Stream AAC 256";
         g.drawText (text, 62, barY, contentWidth() - 130, 32,
                     juce::Justification::centredLeft);
@@ -1019,6 +1023,7 @@ private:
     bool            companionConnected { false };
     bool            serverConnected    { false };
     bool            engineerConnected  { false };
+    int             latencyMs          { 0 };
     DetailsPanel    detailsPanel;
     juce::String    sessionCode { TakeUI::generateSessionCode() };
     RecordRing      recordRing;
