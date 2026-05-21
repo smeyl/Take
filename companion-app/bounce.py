@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -56,6 +57,7 @@ def wait_for_render(path):
 
 bounce_app = Flask("bounce_server")
 CORS(bounce_app)
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 _bouncing = False
 _last_result = None

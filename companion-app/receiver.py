@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -11,6 +12,7 @@ _received_takes = []
 
 app = Flask(__name__)
 CORS(app)
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 @app.route("/upload", methods=["POST"])
