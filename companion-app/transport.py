@@ -7,6 +7,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 import sounddevice as sd
 import soundfile as sf
+import cue_receiver
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -84,6 +85,14 @@ def stop():
 def status():
     with _lock:
         return jsonify({"recording": _recording, "take": _take})
+
+
+@app.route("/cue/local/<param>/<int:value>", methods=["POST"])
+def cue_local(param, value):
+    if param not in cue_receiver.params:
+        return jsonify({"error": "unknown param"}), 400
+    cue_receiver.params[param] = max(0, min(100, value))
+    return jsonify({"ok": True, "param": param, "value": cue_receiver.params[param]})
 
 
 if __name__ == "__main__":

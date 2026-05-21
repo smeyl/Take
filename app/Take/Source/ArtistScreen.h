@@ -5,6 +5,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <thread>
+#include <string>
 
 //==============================================================================
 namespace TakeUI
@@ -298,6 +300,24 @@ class ArtistScreen : public juce::Component,
     class CueMixPanel : public juce::Component
     {
     public:
+        struct KnobDef
+        {
+            const char*  label;
+            const char*  param;
+            float        value;
+            juce::uint32 colour;
+        };
+
+        CueMixPanel()
+        {
+            knobs[0] = { "Reverb",  "reverb",        0.0f, 0xFFA78BFA };
+            knobs[1] = { "Rev mix", "reverbMix",    0.0f, 0xFFA78BFA };
+            knobs[2] = { "Delay",   "delay",         0.0f, 0xFF2DD4BF };
+            knobs[3] = { "Del mix", "delayMix",      0.0f, 0xFF2DD4BF };
+            knobs[4] = { "Comp",    "compression",   0.0f, 0xFFFFB340 };
+            knobs[5] = { "Cue vol", "volume",      100.0f, 0xFF3DDC84 };
+        }
+
         void paint (juce::Graphics& g) override
         {
             g.setColour (juce::Colour (0xFF18181C));
@@ -310,16 +330,6 @@ class ArtistScreen : public juce::Component,
             g.setColour (juce::Colour (0xFF5C5C6E));
             g.drawText ("Cue mix", 12, 6, 60, 12, juce::Justification::centredLeft);
 
-            struct Knob { const char* label; float value; juce::uint32 colour; };
-            const Knob knobs[] = {
-                { "Reverb",  60.0f, 0xFFA78BFA },
-                { "Rev mix", 30.0f, 0xFFA78BFA },
-                { "Delay",   40.0f, 0xFF2DD4BF },
-                { "Del mix", 20.0f, 0xFF2DD4BF },
-                { "Comp",    50.0f, 0xFFFFB340 },
-                { "Cue vol", 75.0f, 0xFF3DDC84 },
-            };
-
             float slotW = (float) getWidth() / 6.0f;
             constexpr float kCy = 37.0f;
 
@@ -327,22 +337,106 @@ class ArtistScreen : public juce::Component,
             {
                 float cx = slotW * i + slotW * 0.5f;
                 drawKnob (g, cx, kCy, knobs[i].value,
-                          juce::Colour (knobs[i].colour), knobs[i].label);
+                          juce::Colour (knobs[i].colour), knobs[i].label,
+                          i == dragKnobIndex);
             }
         }
 
         void resized() override {}
 
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            dragKnobIndex = knobIndexAt (e.x, e.y);
+            if (dragKnobIndex >= 0)
+            {
+                dragStartY     = e.y;
+                dragStartValue = knobs[dragKnobIndex].value;
+            }
+        }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (dragKnobIndex < 0) return;
+            float delta = (float)(dragStartY - e.y);
+            knobs[dragKnobIndex].value = juce::jlimit (0.0f, 100.0f, dragStartValue + delta);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            if (dragKnobIndex < 0) return;
+            int val = juce::roundToInt (knobs[dragKnobIndex].value);
+            std::string path = std::string ("/cue/local/") + knobs[dragKnobIndex].param
+                               + "/" + std::to_string (val);
+            std::thread ([path]() { rawHttpPost ("127.0.0.1", 5004, path.c_str()); }).detach();
+            dragKnobIndex = -1;
+            repaint();
+        }
+
     private:
+        KnobDef knobs[6];
+        int     dragKnobIndex  { -1 };
+        int     dragStartY     { 0 };
+        float   dragStartValue { 0.0f };
+
+        int knobIndexAt (int mx, int my) const
+        {
+            float slotW = (float) getWidth() / 6.0f;
+            constexpr float kCy = 37.0f, kR = 16.0f;
+            for (int i = 0; i < 6; ++i)
+            {
+                float cx = slotW * i + slotW * 0.5f;
+                float dx = (float) mx - cx, dy = (float) my - kCy;
+                if (dx * dx + dy * dy <= kR * kR)
+                    return i;
+            }
+            return -1;
+        }
+
+        static void rawHttpPost (const char* host, int port, const char* path)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return;
+
+            struct timeval tv { 1, 0 };
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return;
+            }
+
+            char header[512];
+            ::snprintf (header, sizeof (header),
+                        "POST %s HTTP/1.0\r\n"
+                        "Host: %s\r\n"
+                        "Content-Length: 0\r\n"
+                        "Connection: close\r\n"
+                        "\r\n",
+                        path, host);
+            ::send (fd, header, ::strlen (header), 0);
+
+            char tmp[64];
+            while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
+            ::close (fd);
+        }
+
         void drawKnob (juce::Graphics& g, float cx, float cy, float value,
-                       juce::Colour colour, const juce::String& label)
+                       juce::Colour colour, const juce::String& label, bool active)
         {
             constexpr float r = 16.0f;
 
             g.setColour (juce::Colour (0xFF0A0A0B));
             g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
 
-            g.setColour (juce::Colour (0xFF2A2A32));
+            g.setColour (active ? colour.withAlpha (0.4f) : juce::Colour (0xFF2A2A32));
             g.drawEllipse (cx - r + 0.5f, cy - r + 0.5f,
                            (r - 0.5f) * 2.0f, (r - 0.5f) * 2.0f, 1.0f);
 
