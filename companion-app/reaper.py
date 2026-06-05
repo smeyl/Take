@@ -24,6 +24,45 @@ def _get(path, timeout=5):
         return None
 
 
+def _get_text(path, timeout=5):
+    try:
+        r = requests.get(f"{BASE}{path}", timeout=timeout)
+        return r.text.strip() if r.status_code == 200 else None
+    except requests.ConnectionError:
+        return None
+
+
+def get_tracks():
+    count_text = _get_text("/GET/TRACK/COUNT")
+    if count_text is None:
+        return []
+    try:
+        count = int(count_text)
+    except ValueError:
+        return []
+    tracks = []
+    for i in range(count):
+        name = _get_text(f"/GET/TRACK/{i}/P_NAME") or f"Track {i + 1}"
+        tracks.append({"index": i, "name": name})
+    return tracks
+
+
+def get_track_count():
+    text = _get_text("/GET/TRACK/COUNT")
+    try:
+        return int(text) if text else 0
+    except ValueError:
+        return 0
+
+
+def get_track_muted(index):
+    return _get_text(f"/GET/TRACK/{index}/B_MUTE") == "1"
+
+
+def set_track_muted(index, muted):
+    _get(f"/SET/TRACK/{index}/B_MUTE/{'1' if muted else '0'}")
+
+
 def create_track():
     status = _get(f"/_/{ACTION_INSERT_TRACK}")
     print(f"create_track   : {'OK' if status == 200 else 'FAILED'} (HTTP {status})")

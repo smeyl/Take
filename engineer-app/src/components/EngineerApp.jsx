@@ -24,6 +24,9 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [receivedTakes, setReceivedTakes] = useState([]);
   const [latencyMs, setLatencyMs]   = useState(null);
   const [bouncing, setBouncing]     = useState(false);
+  const [levels, setLevels]         = useState({ l: -60, r: -60 });
+  const [destTracks, setDestTracks] = useState([]);
+  const [destTrack, setDestTrack]   = useState(0);
 
   const sendCue = async (param, value) => {
     try {
@@ -57,6 +60,36 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         setRecording(data.recording);
       }
     } catch {}
+  };
+
+  const BOUNCE_TRACK_KEYS = ["drums", "bass", "keys"];
+
+  const handleBounceTrackToggle = async (key, checked) => {
+    const updated = { ...tracks, [key]: checked };
+    setTracks(updated);
+    const indices = BOUNCE_TRACK_KEYS.map((k, i) => updated[k] ? i : null).filter(i => i !== null);
+    try {
+      await fetch(`${BOUNCE}/bounce/tracks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracks: indices }),
+      });
+    } catch {}
+  };
+
+  const handleTrackSelect = async (index) => {
+    setDestTrack(index);
+    try {
+      await fetch(`${FILE_RECEIVER}/track/select/${index}`, { method: "POST" });
+    } catch {}
+  };
+
+  const handleEndSession = async () => {
+    if (!window.confirm("End session?")) return;
+    try {
+      await fetch(`${RELAY}/session/${sessionCode}`, { method: "DELETE" });
+    } catch {}
+    onBack();
   };
 
   const handleBounce = async () => {
@@ -139,6 +172,24 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
   }, [sessionCode]);
 
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch(`${TRANSPORT}/levels`);
+        if (r.ok) setLevels(await r.json());
+      } catch {}
+    };
+    const id = setInterval(poll, 100);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    fetch(`${FILE_RECEIVER}/tracks`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (data.length) setDestTracks(data); })
+      .catch(() => {});
+  }, []);
+
   const takesScrollRef = useRef(null);
   useEffect(() => {
     if (takesScrollRef.current) {
@@ -181,6 +232,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               ? <><div className="dot r" /><span style={{ color: C.red }}>T{takeCount} recording</span></>
               : <span style={{ color: C.muted }}>{displayCode}</span>}
             <span style={{ color: showDetails ? C.blue : C.muted, cursor: "pointer" }} onClick={() => setShowDetails(d => !d)}>Details</span>
+            <span
+              onClick={handleEndSession}
+              style={{ color: C.red, border: `1px solid #5c1a1a`, background: "#1a0808", borderRadius: 4, padding: "2px 7px", cursor: "pointer" }}
+            >End session</span>
           </div>
         </div>
 
@@ -189,10 +244,21 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
           <div className="ecol" style={{ width: 210, flexShrink: 0 }}>
             <div>
               <div className="sec-label">Artist input</div>
-              <div className="meter-lbl"><span>L</span><span style={{ color: C.green }}>–12</span></div>
-              <div className="meter-bar"><div className="meter-fill" style={{ width: "68%" }} /></div>
-              <div className="meter-lbl"><span>R</span><span style={{ color: C.green }}>–14</span></div>
-              <div className="meter-bar"><div className="meter-fill" style={{ width: "61%" }} /></div>
+              {[["L", levels.l], ["R", levels.r]].map(([ch, db]) => {
+                const pct   = Math.max(0, (db + 60) / 60 * 100);
+                const color = db > -6 ? "#ff4f4f" : db > -12 ? "#ffb340" : "#3ddc84";
+                return (
+                  <div key={ch}>
+                    <div className="meter-lbl">
+                      <span>{ch}</span>
+                      <span style={{ color }}>{Math.round(db)}</span>
+                    </div>
+                    <div className="meter-bar">
+                      <div className="meter-fill" style={{ width: `${pct}%`, background: color }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <div>
               <div className="sec-label">Takes</div>
@@ -216,6 +282,25 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                   </div>
                 ))}
               </div>
+            </div>
+            <div>
+              <div className="sec-label">Destination track</div>
+              <select
+                value={destTrack}
+                onChange={e => handleTrackSelect(Number(e.target.value))}
+                style={{
+                  width: "100%", background: C.raised, border: `1px solid ${C.border}`,
+                  color: destTracks.length ? C.body : C.muted, borderRadius: 4,
+                  padding: "4px 6px", fontSize: 9, fontFamily: "inherit", cursor: "pointer",
+                }}
+              >
+                {destTracks.length === 0
+                  ? <option value={0}>No tracks — Reaper not connected</option>
+                  : destTracks.map(t => (
+                      <option key={t.index} value={t.index}>{t.name || `Track ${t.index + 1}`}</option>
+                    ))
+                }
+              </select>
             </div>
             <div>
               <div className="sec-label">Transport</div>
@@ -305,7 +390,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             <div className="track-check">
               {[["drums", "01 — Drums"], ["bass", "02 — Bass"], ["keys", "03 — Keys"]].map(([k, name]) => (
                 <label key={k} className="track-item">
-                  <input type="checkbox" checked={tracks[k]} onChange={e => setTracks(t => ({ ...t, [k]: e.target.checked }))} style={{ accentColor: C.blue }} />
+                  <input type="checkbox" checked={tracks[k]} onChange={e => handleBounceTrackToggle(k, e.target.checked)} style={{ accentColor: C.blue }} />
                   <span style={{ color: tracks[k] ? C.body : C.muted }}>{name}</span>
                 </label>
               ))}

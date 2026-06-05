@@ -5,9 +5,10 @@ import time
 from datetime import datetime
 
 import requests
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
+import reaper
 from reaper import BASE
 from sender import send_file
 
@@ -62,13 +63,36 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 _bouncing = False
 _last_result = None
 _last_time = None
+selected_tracks = []  # empty = all tracks; list of ints = only those tracks
+
+
+def _apply_track_selection():
+    """Mute tracks not in selected_tracks. Returns saved (index, was_muted) pairs."""
+    if not selected_tracks:
+        return []
+    count = reaper.get_track_count()
+    saved = []
+    for i in range(count):
+        was_muted = reaper.get_track_muted(i)
+        saved.append((i, was_muted))
+        if i not in selected_tracks and not was_muted:
+            reaper.set_track_muted(i, True)
+    return saved
+
+
+def _restore_track_selection(saved):
+    for i, was_muted in saved:
+        if i not in selected_tracks and not was_muted:
+            reaper.set_track_muted(i, False)
 
 
 def _do_bounce():
     global _bouncing, _last_result, _last_time
     if os.path.exists(RENDER_OUTPUT):
         os.remove(RENDER_OUTPUT)
+    saved_mutes = _apply_track_selection()
     ok = trigger_render() and wait_for_render(RENDER_OUTPUT)
+    _restore_track_selection(saved_mutes)
     if ok:
         send_file(RENDER_OUTPUT, TARGET_IP)
         _last_result = "ok"
@@ -76,6 +100,14 @@ def _do_bounce():
         _last_result = "error"
     _last_time = datetime.now().isoformat()
     _bouncing = False
+
+
+@bounce_app.route("/bounce/tracks", methods=["POST"])
+def set_bounce_tracks():
+    global selected_tracks
+    data = request.get_json(force=True, silent=True) or {}
+    selected_tracks = [int(i) for i in data.get("tracks", [])]
+    return jsonify({"ok": True, "selected_tracks": selected_tracks})
 
 
 @bounce_app.route("/bounce", methods=["POST"])

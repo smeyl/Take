@@ -36,16 +36,19 @@ class ArtistScreen : public juce::Component,
     class RecordRing : public juce::Component
     {
     public:
-        bool isRecording { false };
-        int  takeNumber  { 1 };
+        bool isRecording   { false };
+        int  takeNumber    { 1 };
+        int  countdownValue { -1 };   // -1 = no countdown, 3/2/1 = counting
 
         void paint (juce::Graphics& g) override
         {
-            auto body       = getLocalBounds().toFloat().reduced (3.0f);
-            auto ringColour = isRecording ? juce::Colour (0xFFFF4F4F)
-                                          : juce::Colour (0xFF185FA5);
+            auto body     = getLocalBounds().toFloat().reduced (3.0f);
+            bool counting = countdownValue > 0;
 
-            if (isRecording)
+            auto ringColour = (isRecording && !counting) ? juce::Colour (0xFFFF4F4F)
+                                                         : juce::Colour (0xFF185FA5);
+
+            if (isRecording && !counting)
             {
                 g.setColour (ringColour.withAlpha (0.05f));
                 g.fillEllipse (body.expanded (26.0f));
@@ -66,11 +69,22 @@ class ArtistScreen : public juce::Component,
             g.setColour (ringColour);
             g.drawEllipse (body, 2.5f);
 
-            g.setFont (TakeUI::monoFont (17.0f, true));
-            g.setColour (juce::Colour (0xFFF0F0F8));
-            g.drawText (isRecording ? "REC" : "READY",
-                        getLocalBounds().translated (0, -8),
-                        juce::Justification::centred);
+            if (counting)
+            {
+                g.setFont (TakeUI::monoFont (40.0f, true));
+                g.setColour (ringColour);
+                g.drawText (juce::String (countdownValue),
+                            getLocalBounds().translated (0, -8),
+                            juce::Justification::centred);
+            }
+            else
+            {
+                g.setFont (TakeUI::monoFont (17.0f, true));
+                g.setColour (juce::Colour (0xFFF0F0F8));
+                g.drawText (isRecording ? "REC" : "READY",
+                            getLocalBounds().translated (0, -8),
+                            juce::Justification::centred);
+            }
 
             g.setFont (TakeUI::monoFont (11.0f));
             g.setColour (ringColour.withAlpha (0.75f));
@@ -115,6 +129,9 @@ class ArtistScreen : public juce::Component,
             g.drawText (ch, labelR, juce::Justification::centred);
 
             auto dbR = bounds.removeFromRight (52);
+            g.setColour (db >= -6.0f  ? juce::Colour (0xFFFF4F4F)
+                       : db >= -12.0f ? juce::Colour (0xFFFFAA00)
+                                      : juce::Colour (0xFF5C5C6E));
             g.drawText (juce::String (juce::roundToInt (db)) + " dB",
                         dbR, juce::Justification::centred);
 
@@ -129,13 +146,25 @@ class ArtistScreen : public juce::Component,
             float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
             if (frac > 0.0f)
             {
-                auto fill = bar.toFloat().withWidth (bar.getWidth() * frac);
-                juce::ColourGradient grad (juce::Colour (0xFF1D9E75), (float) bar.getX(), 0.0f,
-                                           juce::Colour (0xFFFF4F4F), (float) bar.getRight(), 0.0f, false);
-                grad.addColour (0.72, juce::Colour (0xFF1D9E75));
-                grad.addColour (0.88, juce::Colour (0xFFFFAA00));
-                g.setGradientFill (grad);
-                g.fillRoundedRectangle (fill, 2.0f);
+                // Three discrete zones: green (-60 to -12), amber (-12 to -6), red (-6 to 0)
+                constexpr float kGreenEnd = 48.0f / 60.0f;   // -12 dB
+                constexpr float kAmberEnd = 54.0f / 60.0f;   // -6 dB
+
+                struct Seg { float start; float end; juce::uint32 colour; };
+                const Seg segs[] = {
+                    { 0.0f,      kGreenEnd, 0xFF1D9E75 },
+                    { kGreenEnd, kAmberEnd, 0xFFFFAA00 },
+                    { kAmberEnd, 1.0f,      0xFFFF4F4F },
+                };
+
+                for (auto& s : segs)
+                {
+                    if (frac <= s.start) break;
+                    float segX = bar.getX() + bar.getWidth() * s.start;
+                    float segW = bar.getWidth() * (juce::jmin (frac, s.end) - s.start);
+                    g.setColour (juce::Colour (s.colour));
+                    g.fillRect (segX, (float) bar.getY(), segW, (float) bar.getHeight());
+                }
             }
         }
     };
@@ -735,6 +764,92 @@ class ArtistScreen : public juce::Component,
         }
     };
 
+    //==========================================================================
+    class MeterPoller : public juce::Thread
+    {
+    public:
+        std::function<void(float, float)> onResult;  // (levelL, levelR) in dB
+
+        MeterPoller() : juce::Thread ("TakeMeterPoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5004, "/levels", body))
+                {
+                    auto json = juce::JSON::parse (body);
+                    if (json.isObject())
+                    {
+                        float l = juce::jlimit (-60.0f, 0.0f, (float)(double) json["l"]);
+                        float r = juce::jlimit (-60.0f, 0.0f, (float)(double) json["r"]);
+                        auto cb = onResult;
+                        if (cb)
+                            juce::MessageManager::callAsync ([cb, l, r]() mutable
+                            {
+                                cb (l, r);
+                            });
+                    }
+                }
+                wait (100);
+            }
+        }
+
+    private:
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 0, 200000 };  // 200ms timeout — fast local poll
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char    tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            if (buf.getSize() == 0) return false;
+
+            juce::String full = juce::String::fromUTF8 (
+                static_cast<const char*> (buf.getData()), (int) buf.getSize());
+            const int sep = full.indexOf ("\r\n\r\n");
+            if (sep < 0) return false;
+
+            body = full.substring (sep + 4).trim();
+            return body.isNotEmpty();
+        }
+    };
+
+    //==========================================================================
+    class CountdownTimer : public juce::Timer
+    {
+    public:
+        std::function<void()> onTick;
+        void timerCallback() override { if (onTick) onTick(); }
+    };
+
 public:
     //==========================================================================
     std::function<void()> onBack;
@@ -761,13 +876,47 @@ public:
 
         // Wire status poll results back to UI components via SafePointer
         juce::Component::SafePointer<ArtistScreen> safeThis (this);
+
+        countdownTimer.onTick = [safeThis]() mutable
+        {
+            if (safeThis == nullptr) return;
+            safeThis->recordRing.countdownValue--;
+            if (safeThis->recordRing.countdownValue <= 0)
+            {
+                safeThis->countdownTimer.stopTimer();
+                safeThis->recordRing.countdownValue = -1;
+                safeThis->recordRing.isRecording    = true;
+            }
+            safeThis->recordRing.repaint();
+            safeThis->repaint();
+        };
+
         statusPoller.onResult = [safeThis] (bool connected, bool recording, int take, int latencyMs)
         {
             if (safeThis == nullptr) return;
-            safeThis->serverConnected        = connected;
-            safeThis->recordRing.isRecording = recording;
-            safeThis->recordRing.takeNumber  = take;
-            safeThis->latencyMs              = latencyMs;
+            safeThis->serverConnected           = connected;
+            safeThis->recordRing.takeNumber     = take;
+            safeThis->latencyMs                 = latencyMs;
+
+            bool wasRecording = safeThis->lastBackendRecording;
+            safeThis->lastBackendRecording = recording;
+
+            if (recording && !wasRecording)
+            {
+                // false→true: kick off 3-2-1 countdown
+                safeThis->recordRing.countdownValue = 3;
+                safeThis->recordRing.isRecording    = false;
+                safeThis->countdownTimer.startTimer (1000);
+            }
+            else if (!recording)
+            {
+                // stopped or still not recording — cancel any running countdown
+                safeThis->countdownTimer.stopTimer();
+                safeThis->recordRing.countdownValue = -1;
+                safeThis->recordRing.isRecording    = false;
+            }
+            // true→true while counting: leave countdown running, don't reset
+
             safeThis->recordRing.repaint();
             safeThis->repaint();
         };
@@ -782,12 +931,19 @@ public:
         };
         timecodePoller.startThread();
 
+        meterPoller.onResult = [safeThis] (float l, float r)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->levelMeter.setLevel (l, r);
+        };
+
         startTimer (2000);   // backing track file check
     }
 
     ~ArtistScreen() override
     {
         stopTimer();
+        meterPoller.stopThread (500);
         timecodePoller.stopThread (500);
         heartbeatThread.stopThread (3000);
         statusPoller.stopThread (3000);
@@ -804,8 +960,12 @@ public:
 
         if (ip.isNotEmpty() && code.isNotEmpty())
         {
+            relayCode = code;
             heartbeatThread.setParams ("127.0.0.1", code);
             heartbeatThread.startThread();
+
+            if (!meterPoller.isThreadRunning())
+                meterPoller.startThread();
 
             juce::File ("/tmp/take_session.json")
                 .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code + "\"}");
@@ -874,6 +1034,18 @@ public:
             return;
         }
 
+        if (endSessionBtnBounds().expanded (4).contains (e.getPosition()))
+        {
+            auto code = relayCode.toStdString();
+            if (!code.empty())
+                std::thread ([code]() {
+                    std::string path = "/session/" + code;
+                    rawHttpDelete ("127.0.0.1", 5010, path.c_str());
+                }).detach();
+            if (onBack) onBack();
+            return;
+        }
+
         if (detailsBtnBounds().expanded (4).contains (e.getPosition()))
         {
             detailsVisible = !detailsVisible;
@@ -904,9 +1076,45 @@ private:
         return { 12, getHeight() - 28, 44, 20 };
     }
 
+    juce::Rectangle<int> endSessionBtnBounds() const
+    {
+        return { 62, getHeight() - 29, 72, 26 };
+    }
+
     juce::Rectangle<int> detailsBtnBounds() const
     {
         return { contentWidth() - 58, getHeight() - 29, 44, 26 };
+    }
+
+    static void rawHttpDelete (const char* host, int port, const char* path)
+    {
+        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return;
+
+        struct timeval tv { 2, 0 };
+        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons ((uint16_t) port);
+        ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+        {
+            ::close (fd);
+            return;
+        }
+
+        char req[256];
+        ::snprintf (req, sizeof (req),
+                    "DELETE %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                    path, host);
+        ::send (fd, req, ::strlen (req), 0);
+
+        char tmp[64];
+        while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
+        ::close (fd);
     }
 
     void drawHeader (juce::Graphics& g)
@@ -1002,6 +1210,17 @@ private:
         g.drawText ("<- Back", 12, barY, 44, 32, juce::Justification::centredLeft);
 
         {
+            auto eb = endSessionBtnBounds();
+            g.setColour (juce::Colour (0xFF1A0808));
+            g.fillRoundedRectangle (eb.toFloat(), 4.0f);
+            g.setColour (juce::Colour (0xFF5C1A1A));
+            g.drawRoundedRectangle (eb.toFloat(), 4.0f, 1.0f);
+            g.setFont (TakeUI::monoFont (9.0f));
+            g.setColour (juce::Colour (0xFFFF4F4F));
+            g.drawText ("End session", eb, juce::Justification::centred);
+        }
+
+        {
             auto db = detailsBtnBounds();
             g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
             g.fillRoundedRectangle (db.toFloat(), 4.0f);
@@ -1015,17 +1234,19 @@ private:
         auto text = juce::String ("Latency ") + juce::String (latencyMs) + "ms"
                     + "  |  Take T" + juce::String (recordRing.takeNumber)
                     + "  |  Stream AAC 256";
-        g.drawText (text, 62, barY, contentWidth() - 130, 32,
+        g.drawText (text, 140, barY, contentWidth() - 198, 32,
                     juce::Justification::centredLeft);
     }
 
-    bool            detailsVisible     { false };
-    bool            companionConnected { false };
-    bool            serverConnected    { false };
-    bool            engineerConnected  { false };
-    int             latencyMs          { 0 };
+    bool            detailsVisible        { false };
+    bool            companionConnected    { false };
+    bool            serverConnected       { false };
+    bool            engineerConnected     { false };
+    int             latencyMs             { 0 };
+    bool            lastBackendRecording  { false };
     DetailsPanel    detailsPanel;
     juce::String    sessionCode { TakeUI::generateSessionCode() };
+    juce::String    relayCode;
     RecordRing      recordRing;
     LevelMeter      levelMeter;
     TrackWindow     trackWindow;
@@ -1034,6 +1255,8 @@ private:
     HeartbeatThread heartbeatThread;
     TimecodePoller  timecodePoller;
     StatusPoller    statusPoller;
+    MeterPoller     meterPoller;
+    CountdownTimer  countdownTimer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };
