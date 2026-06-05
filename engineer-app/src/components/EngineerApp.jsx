@@ -4,10 +4,11 @@ import Knob from "./Knob";
 import WaveCanvas from "./WaveCanvas";
 import DetailsPanel from "./DetailsPanel";
 
-const RELAY         = "http://localhost:5010";
-const TRANSPORT     = "http://localhost:5004";
-const FILE_RECEIVER = "http://localhost:5001";
-const BOUNCE        = "http://localhost:5006";
+const RELAY          = "http://localhost:5010";
+const TRANSPORT      = "http://localhost:5004";
+const FILE_RECEIVER  = "http://localhost:5001";
+const BOUNCE         = "http://localhost:5006";
+const STREAM_SENDER  = "http://localhost:5007";
 
 export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [recording, setRecording]   = useState(false);
@@ -27,6 +28,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [levels, setLevels]         = useState({ l: -60, r: -60 });
   const [destTracks, setDestTracks] = useState([]);
   const [destTrack, setDestTrack]   = useState(0);
+  const [punchActive, setPunchActive] = useState(false);
 
   const sendCue = async (param, value) => {
     try {
@@ -90,6 +92,60 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       await fetch(`${RELAY}/session/${sessionCode}`, { method: "DELETE" });
     } catch {}
     onBack();
+  };
+
+  const STREAM_Q_MAP = { "AAC 128": "AAC128", "AAC 256": "AAC256", "FLAC": "FLAC" };
+
+  const handleStreamQ = async (label) => {
+    setStreamQ(label);
+    try {
+      await fetch(`${STREAM_SENDER}/stream-quality`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quality: STREAM_Q_MAP[label] }),
+      });
+    } catch {}
+  };
+
+  const SYNC_FMT_MAP = { "FLAC": "FLAC", "WAV 24": "WAV24", "WAV 32f": "WAV32f" };
+
+  const handleSyncFmt = async (label) => {
+    setSyncFmt(label);
+    try {
+      await fetch(`${FILE_RECEIVER}/sync-format`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format: SYNC_FMT_MAP[label] }),
+      });
+    } catch {}
+  };
+
+  const handlePunch = async () => {
+    if (punchActive) {
+      try {
+        await fetch(`${RELAY}/punch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ in: 0, out: 0, active: false }),
+        });
+      } catch {}
+      setPunchActive(false);
+    } else {
+      let punchIn = 0;
+      try {
+        const r = await fetch(`${RELAY}/timecode`);
+        if (r.ok) punchIn = (await r.json()).pos || 0;
+      } catch {}
+      const punchOut = punchIn + 8;
+      try {
+        await fetch(`${RELAY}/punch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ in: punchIn, out: punchOut }),
+        });
+      } catch {}
+      setPunchActive(true);
+    }
   };
 
   const handleBounce = async () => {
@@ -310,7 +366,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                 </div>
                 <div className="ebtn ebtn-ghost" style={{ flex: 1 }} onClick={handleRTZ}>↩ RTZ</div>
               </div>
-              <div className="ebtn ebtn-amber" style={{ width: "100%", textAlign: "center" }}>⊡ Punch in/out</div>
+              <div
+                className={`ebtn ebtn-amber ${punchActive ? "on" : ""}`}
+                style={{ width: "100%", textAlign: "center" }}
+                onClick={handlePunch}
+              >{punchActive ? "⊡ Punch active" : "⊡ Punch in/out"}</div>
             </div>
             <div>
               <div className="sec-label">Sync</div>
@@ -321,10 +381,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               </div>
               <div style={{ height: 6 }} />
               <div className="sec-label">Stream quality</div>
-              <div className="pill-grp">{["AAC 128", "AAC 256", "FLAC"].map(q => <div key={q} className={`pill ${streamQ === q ? "on" : ""}`} onClick={() => setStreamQ(q)}>{q}</div>)}</div>
+              <div className="pill-grp">{["AAC 128", "AAC 256", "FLAC"].map(q => <div key={q} className={`pill ${streamQ === q ? "on" : ""}`} onClick={() => handleStreamQ(q)}>{q}</div>)}</div>
               <div style={{ height: 6 }} />
               <div className="sec-label">Sync format</div>
-              <div className="pill-grp">{["FLAC", "WAV 24", "WAV 32f"].map(f => <div key={f} className={`pill ${syncFmt === f ? "on" : ""}`} onClick={() => setSyncFmt(f)}>{f}</div>)}</div>
+              <div className="pill-grp">{["FLAC", "WAV 24", "WAV 32f"].map(f => <div key={f} className={`pill ${syncFmt === f ? "on" : ""}`} onClick={() => handleSyncFmt(f)}>{f}</div>)}</div>
               <div style={{ height: 6 }} />
               <div className="sync-now" style={{ opacity: autoSync ? 0.4 : 1, cursor: autoSync ? "default" : "pointer" }}>
                 {autoSync ? "Auto-sync enabled" : takeCount > 0 ? `Sync T${takeCount} now` : "No take to sync"}

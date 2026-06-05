@@ -32,6 +32,27 @@ def _get_text(path, timeout=5):
         return None
 
 
+def get_markers():
+    count_text = _get_text("/GET/MARKER/COUNT")
+    if count_text is None:
+        return []
+    try:
+        count = int(count_text)
+    except ValueError:
+        return []
+    markers = []
+    for n in range(count):
+        name     = _get_text(f"/GET/MARKER/{n}/NAME") or ""
+        pos_text = _get_text(f"/GET/MARKER/{n}/POSITION")
+        try:
+            position = float(pos_text) if pos_text else 0.0
+        except ValueError:
+            position = 0.0
+        if name:
+            markers.append({"name": name, "position": position})
+    return markers
+
+
 def get_tracks():
     count_text = _get_text("/GET/TRACK/COUNT")
     if count_text is None:

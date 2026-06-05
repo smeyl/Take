@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <thread>
 #include <string>
+#include <vector>
 
 //==============================================================================
 namespace TakeUI
@@ -32,6 +33,9 @@ namespace TakeUI
 class ArtistScreen : public juce::Component,
                      public juce::Timer
 {
+    //==========================================================================
+    struct Marker { juce::String name; float position; };  // position in seconds
+
     //==========================================================================
     class RecordRing : public juce::Component
     {
@@ -173,8 +177,16 @@ class ArtistScreen : public juce::Component,
     class TrackWindow : public juce::Component
     {
     public:
-        float playheadPct  { 0.0f };
+        float playheadPct   { 0.0f };
         bool  backingLoaded { false };
+        float totalDuration { 64.0f };
+        std::vector<Marker> markers;
+        float punchIn     { 0.0f };
+        float punchOut    { 0.0f };
+        bool  punchActive { false };
+
+        void setMarkers (const std::vector<Marker>& m) { markers = m; repaint(); }
+        void setPunch   (float in, float out, bool active) { punchIn = in; punchOut = out; punchActive = active; repaint(); }
 
         void paint (juce::Graphics& g) override
         {
@@ -190,25 +202,39 @@ class ArtistScreen : public juce::Component,
     private:
         void drawSections (juce::Graphics& g, juce::Rectangle<int> b)
         {
-            struct Sec { const char* name; bool current; };
-            const Sec secs[] = {
-                { "Verse 1", false },
-                { "Chorus",  true  },
-                { "Verse 2", false },
-            };
+            g.setColour (juce::Colour (0xFF18181C));
+            g.fillRect (b);
 
-            int sw = b.getWidth() / 3;
-
-            for (int i = 0; i < 3; ++i)
+            if (markers.empty())
             {
-                int secX = b.getX() + i * sw;
-                int secW = (i == 2) ? (b.getWidth() - 2 * sw) : sw;
+                g.setFont (TakeUI::monoFont (10.0f));
+                g.setColour (juce::Colour (0xFF3A3A48));
+                g.drawText ("No markers", b, juce::Justification::centred);
+                g.setColour (juce::Colour (0xFF1E1E24));
+                g.drawHorizontalLine (b.getBottom() - 1, (float) b.getX(), (float) b.getRight());
+                return;
+            }
+
+            const int   n           = (int) markers.size();
+            const float slotW       = (float) b.getWidth() / (float) n;
+            const float playheadSec = playheadPct * totalDuration;
+
+            // current = last marker whose start position <= playhead
+            int currentIdx = 0;
+            for (int i = 0; i < n; ++i)
+                if (markers[i].position <= playheadSec)
+                    currentIdx = i;
+
+            for (int i = 0; i < n; ++i)
+            {
+                int secX = b.getX() + (int) (slotW * (float) i);
+                int secW = (i == n - 1) ? (b.getWidth() - (int) (slotW * (float) i)) : (int) slotW;
                 auto r   = juce::Rectangle<int> (secX, b.getY(), secW, b.getHeight());
 
                 g.setColour (juce::Colour (0xFF18181C));
                 g.fillRect (r);
 
-                if (secs[i].current)
+                if (i == currentIdx)
                 {
                     g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.08f));
                     g.fillRect (r);
@@ -219,7 +245,7 @@ class ArtistScreen : public juce::Component,
 
                     g.setFont (TakeUI::monoFont (13.0f, true));
                     g.setColour (juce::Colour (0xFF4F8FFF));
-                    g.drawText (secs[i].name, r, juce::Justification::centred);
+                    g.drawText (markers[i].name, r, juce::Justification::centred);
                 }
                 else
                 {
@@ -231,7 +257,7 @@ class ArtistScreen : public juce::Component,
 
                     g.setFont (TakeUI::monoFont (10.0f));
                     g.setColour (juce::Colour (0xFF5C5C6E));
-                    g.drawText (secs[i].name, r, juce::Justification::centred);
+                    g.drawText (markers[i].name, r, juce::Justification::centred);
                 }
             }
 
@@ -259,10 +285,21 @@ class ArtistScreen : public juce::Component,
             float cy   = (float) b.getCentreY();
             float maxH = b.getHeight() * 0.40f;
 
-            float punchX1 = bx + bw * 0.20f;
-            float punchX2 = bx + bw * 0.50f;
-            g.setColour (juce::Colour (0xFFFF4F4F).withAlpha (0.10f));
-            g.fillRect (punchX1, (float) b.getY(), punchX2 - punchX1, (float) b.getHeight());
+            if (punchActive && punchOut > punchIn)
+            {
+                float px1 = bx + bw * juce::jlimit (0.0f, 1.0f, punchIn  / totalDuration);
+                float px2 = bx + bw * juce::jlimit (0.0f, 1.0f, punchOut / totalDuration);
+                g.setColour (juce::Colour (0xFFFFAA00).withAlpha (0.12f));
+                g.fillRect (px1, (float) b.getY(), px2 - px1, (float) b.getHeight());
+                g.setColour (juce::Colour (0xFFFFB340).withAlpha (0.75f));
+                g.drawLine (px1, (float) b.getY(), px1, (float) b.getBottom(), 1.5f);
+                g.drawLine (px2, (float) b.getY(), px2, (float) b.getBottom(), 1.5f);
+            }
+
+            float pxZoneL = (punchActive && punchOut > punchIn)
+                                ? bx + bw * juce::jlimit (0.0f, 1.0f, punchIn  / totalDuration) : -1.0f;
+            float pxZoneR = (punchActive && punchOut > punchIn)
+                                ? bx + bw * juce::jlimit (0.0f, 1.0f, punchOut / totalDuration) : -1.0f;
 
             for (int px = b.getX(); px < b.getRight(); px += 3)
             {
@@ -273,9 +310,21 @@ class ArtistScreen : public juce::Component,
                 amp = juce::jlimit (0.05f, 1.0f, amp);
                 float hh = amp * maxH;
 
-                bool inPunch = ((float) px >= punchX1 && (float) px < punchX2);
+                bool inPunch = (pxZoneL >= 0.0f && (float) px >= pxZoneL && (float) px < pxZoneR);
                 g.setColour (inPunch ? juce::Colour (0xFF4A4A5E) : juce::Colour (0xFF353542));
                 g.drawLine ((float) px, cy - hh, (float) px, cy + hh, 1.0f);
+            }
+
+            // Marker lines — drawn before playhead so playhead stays on top
+            g.setFont (TakeUI::monoFont (8.0f));
+            for (const auto& m : markers)
+            {
+                float mxF = bx + bw * juce::jlimit (0.0f, 1.0f, m.position / totalDuration);
+                g.setColour (juce::Colour (0xFF6A7ABE).withAlpha (0.7f));
+                g.drawLine (mxF, (float) b.getY(), mxF, (float) b.getBottom(), 1.0f);
+                g.setColour (juce::Colour (0xFF7A8ACE));
+                g.drawText (m.name, (int) mxF + 2, b.getY() + 1, 48, 10,
+                            juce::Justification::centredLeft);
             }
 
             float phX = bx + bw * juce::jlimit (0.0f, 1.0f, playheadPct);
@@ -843,6 +892,168 @@ class ArtistScreen : public juce::Component,
     };
 
     //==========================================================================
+    class MarkersPoller : public juce::Thread
+    {
+    public:
+        std::function<void(std::vector<Marker>)> onResult;
+
+        MarkersPoller() : juce::Thread ("TakeMarkersPoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5010, "/markers", body))
+                {
+                    auto arr = juce::JSON::parse (body);
+                    if (arr.isArray())
+                    {
+                        std::vector<Marker> result;
+                        for (const auto& item : *arr.getArray())
+                        {
+                            if (item.isObject())
+                                result.push_back ({ item["name"].toString(),
+                                                   (float)(double) item["position"] });
+                        }
+                        auto cb = onResult;
+                        if (cb)
+                            juce::MessageManager::callAsync ([cb, result]() mutable
+                            {
+                                cb (result);
+                            });
+                    }
+                }
+                wait (5000);
+            }
+        }
+
+    private:
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 2, 0 };
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char    tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            if (buf.getSize() == 0) return false;
+
+            juce::String full = juce::String::fromUTF8 (
+                static_cast<const char*> (buf.getData()), (int) buf.getSize());
+            const int sep = full.indexOf ("\r\n\r\n");
+            if (sep < 0) return false;
+
+            body = full.substring (sep + 4).trim();
+            return body.isNotEmpty();
+        }
+    };
+
+    //==========================================================================
+    class PunchPoller : public juce::Thread
+    {
+    public:
+        std::function<void(float, float, bool)> onResult;  // (in, out, active)
+
+        PunchPoller() : juce::Thread ("TakePunchPoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5010, "/punch", body))
+                {
+                    auto json = juce::JSON::parse (body);
+                    if (json.isObject())
+                    {
+                        float pIn    = (float)(double) json["in"];
+                        float pOut   = (float)(double) json["out"];
+                        bool  active = (bool)          json["active"];
+                        auto cb = onResult;
+                        if (cb)
+                            juce::MessageManager::callAsync ([cb, pIn, pOut, active]() mutable
+                            {
+                                cb (pIn, pOut, active);
+                            });
+                    }
+                }
+                wait (2000);
+            }
+        }
+
+    private:
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 2, 0 };
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char    tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            if (buf.getSize() == 0) return false;
+
+            juce::String full = juce::String::fromUTF8 (
+                static_cast<const char*> (buf.getData()), (int) buf.getSize());
+            const int sep = full.indexOf ("\r\n\r\n");
+            if (sep < 0) return false;
+
+            body = full.substring (sep + 4).trim();
+            return body.isNotEmpty();
+        }
+    };
+
+    //==========================================================================
     class CountdownTimer : public juce::Timer
     {
     public:
@@ -937,12 +1148,28 @@ public:
             safeThis->levelMeter.setLevel (l, r);
         };
 
+        markersPoller.onResult = [safeThis] (std::vector<Marker> m)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->trackWindow.setMarkers (m);
+        };
+        markersPoller.startThread();
+
+        punchPoller.onResult = [safeThis] (float in, float out, bool active)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->trackWindow.setPunch (in, out, active);
+        };
+        punchPoller.startThread();
+
         startTimer (2000);   // backing track file check
     }
 
     ~ArtistScreen() override
     {
         stopTimer();
+        punchPoller.stopThread (500);
+        markersPoller.stopThread (500);
         meterPoller.stopThread (500);
         timecodePoller.stopThread (500);
         heartbeatThread.stopThread (3000);
@@ -1256,6 +1483,8 @@ private:
     TimecodePoller  timecodePoller;
     StatusPoller    statusPoller;
     MeterPoller     meterPoller;
+    MarkersPoller   markersPoller;
+    PunchPoller     punchPoller;
     CountdownTimer  countdownTimer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)

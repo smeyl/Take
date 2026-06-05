@@ -6,6 +6,7 @@ import numpy as np
 import pyaudio
 from watchdog.observers import Observer
 from watcher import AudioHandler, WATCH_PATH, TARGET_IP
+import stream_sender
 
 STREAM_PORT = 5002
 CHUNK = 1024
@@ -38,7 +39,7 @@ def run_stream(params=None):
                 gain = params["volume"] / 100.0
                 samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
                 data = np.clip(samples * gain, -32768, 32767).astype(np.int16).tobytes()
-            sock.sendto(data, (TARGET_IP, STREAM_PORT))
+            sock.sendto(stream_sender.encode(data), (TARGET_IP, STREAM_PORT))
     finally:
         stream.stop_stream()
         stream.close()

@@ -11,6 +11,27 @@ CHUNK = 1024
 RATE = 44100
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
+QUALITY_FILE = "/tmp/take_stream_quality"
+
+
+def _get_quality():
+    try:
+        with open(QUALITY_FILE) as fh:
+            return fh.read().strip()
+    except OSError:
+        return "AAC256"
+
+
+def _decode(data):
+    q = _get_quality()
+    if q == "AAC128":
+        return np.frombuffer(data, dtype=np.int16)
+    elif q == "AAC256":
+        arr = np.frombuffer(data, dtype=np.int32)
+        return (arr >> 8).astype(np.int16)
+    else:  # FLAC
+        arr = np.frombuffer(data, dtype=np.float32)
+        return np.clip(arr * 32768.0, -32768, 32767).astype(np.int16)
 
 
 def run_stream_receiver(stop_event):
@@ -25,8 +46,8 @@ def run_stream_receiver(stop_event):
     try:
         while not stop_event.is_set():
             try:
-                data, _ = sock.recvfrom(CHUNK * 2)  # 2 bytes per int16 frame
-                samples = np.frombuffer(data, dtype=np.int16)
+                data, _ = sock.recvfrom(CHUNK * 4)  # 4 bytes/sample covers int32 and float32
+                samples = _decode(data)
                 out = cue_receiver.process_audio(samples)
                 stream.write(out.tobytes())
             except socket.timeout:

@@ -6,8 +6,10 @@ from flask_cors import CORS
 
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
 PORT = 5001
+SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 
 on_file_received = None  # optional callback(filename, size) set by the host app
+sync_format = "WAV24"    # "WAV24" | "WAV32f" | "FLAC"
 _received_takes = []
 
 app = Flask(__name__)
@@ -36,6 +38,22 @@ def upload():
 @app.route("/takes", methods=["GET"])
 def get_takes():
     return jsonify(_received_takes)
+
+
+@app.route("/sync-format", methods=["POST"])
+def set_sync_format():
+    global sync_format
+    data = request.get_json(silent=True) or {}
+    fmt = data.get("format", "WAV24")
+    if fmt not in ("WAV24", "WAV32f", "FLAC"):
+        return jsonify({"error": "invalid format"}), 400
+    sync_format = fmt
+    try:
+        with open(SYNC_FORMAT_FILE, "w") as fh:
+            fh.write(fmt)
+    except OSError:
+        pass
+    return jsonify({"ok": True, "format": sync_format})
 
 
 if __name__ == "__main__":

@@ -17,6 +17,15 @@ RECORDINGS_PATH = os.path.join(os.path.dirname(__file__), "recordings")
 PORT = 5004
 RATE = 44100
 CHANNELS = 1
+_SYNC_FORMAT_FILE = "/tmp/take_sync_format"
+
+
+def _get_sync_format():
+    try:
+        with open(_SYNC_FORMAT_FILE) as fh:
+            return fh.read().strip()
+    except OSError:
+        return "WAV24"
 
 app = Flask(__name__)
 CORS(app)
@@ -99,8 +108,17 @@ def record():
         _take += 1
         os.makedirs(RECORDINGS_PATH, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.wav")
-        _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="PCM_16")
+        fmt = _get_sync_format()
+        if fmt == "FLAC":
+            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.flac")
+            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS,
+                                    format="FLAC", subtype="PCM_24")
+        elif fmt == "WAV32f":
+            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.wav")
+            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="FLOAT")
+        else:  # WAV24 (default)
+            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.wav")
+            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="PCM_24")
         _stop_writer = threading.Event()
         _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
         _writer_thread.start()

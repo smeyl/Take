@@ -6,6 +6,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests as _requests
+import reaper
 
 app = Flask(__name__)
 CORS(app)
@@ -19,6 +20,7 @@ HEARTBEAT_TTL = 15  # seconds before a role is considered dead
 sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 
 timecode_state = {"pos": 0.0, "playing": False}
+punch_state    = {"in": 0.0, "out": 0.0, "active": False}
 
 CHARS = string.ascii_uppercase + string.digits
 CUE_PORT = 5003
@@ -175,6 +177,33 @@ def post_timecode():
     timecode_state["pos"]     = float(data.get("pos", 0.0))
     timecode_state["playing"] = bool(data.get("playing", False))
     return jsonify({"ok": True})
+
+
+@app.route("/punch", methods=["GET"])
+def get_punch():
+    return jsonify(punch_state)
+
+
+@app.route("/punch", methods=["POST"])
+def set_punch():
+    data     = request.get_json(force=True, silent=True) or {}
+    punch_in  = float(data.get("in",  0.0))
+    punch_out = float(data.get("out", 0.0))
+    # explicit active=false clears the zone; otherwise infer from values
+    if "active" in data and not data["active"]:
+        punch_state["in"]     = 0.0
+        punch_state["out"]    = 0.0
+        punch_state["active"] = False
+    else:
+        punch_state["in"]     = punch_in
+        punch_state["out"]    = punch_out
+        punch_state["active"] = punch_in > 0.0 or punch_out > 0.0
+    return jsonify({"ok": True})
+
+
+@app.route("/markers", methods=["GET"])
+def get_markers():
+    return jsonify(reaper.get_markers())
 
 
 @app.route("/reaper/status", methods=["GET"])

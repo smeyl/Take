@@ -14,6 +14,7 @@ import artist
 import backing_player
 import cue_receiver
 import stream_receiver
+import stream_sender
 import timecode
 import transport
 from artist import run_watcher, run_stream, stop_event
@@ -124,6 +125,11 @@ if __name__ == "__main__":
             daemon=True,
         ),
         threading.Thread(
+            target=stream_sender.run_flask,
+            name="stream-quality",
+            daemon=True,
+        ),
+        threading.Thread(
             target=run_heartbeat,
             args=(RELAY_URL, code, stop_event,
                   lambda: shutdown("Session ended — engineer disconnected")),
@@ -145,6 +151,7 @@ if __name__ == "__main__":
     print(f"  Backing player  : {BACKING_PATH}")
     print(f"  Transport       : 0.0.0.0:{transport.PORT}")
     print(f"  Timecode        : UDP 0.0.0.0:{timecode.PORT}")
+    print(f"  Stream quality  : 0.0.0.0:{stream_sender.FLASK_PORT}")
     print("Press Ctrl+C to stop.\n")
 
     stop_event.wait()
