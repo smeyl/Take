@@ -89,11 +89,24 @@ if __name__ == "__main__":
         code = input("Enter session code: ")
 
     local_ip = get_local_ip()
-    resp = requests.post(f"{RELAY_URL}/session/join",
-                         json={"code": code, "ip": local_ip}, timeout=5)
-    resp.raise_for_status()
-    TARGET_IP = resp.json()["engineer_ip"]
 
+    MAX_WAIT = 60
+    start_time = time.time()
+    while True:
+        try:
+            resp = requests.post(f"{RELAY_URL}/session/join",
+                                 json={"code": code, "ip": local_ip}, timeout=5)
+            resp.raise_for_status()
+            break
+        except Exception as e:
+            elapsed = time.time() - start_time
+            if elapsed > MAX_WAIT:
+                print(f"Could not connect to relay after {MAX_WAIT}s. Is the engineer running?")
+                sys.exit(1)
+            print(f"Waiting for engineer... ({int(elapsed)}s)")
+            time.sleep(3)
+
+    TARGET_IP = resp.json()["engineer_ip"]
     print(f"Engineer found — {TARGET_IP}")
 
     watcher.TARGET_IP = TARGET_IP
