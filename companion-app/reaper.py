@@ -24,33 +24,35 @@ def _get(path, timeout=5):
         return None
 
 
-def _get_text(path, timeout=5):
+def _get_text(path, timeout=5, debug=False):
+    url = f"{BASE}{path}"
+    if debug:
+        print(f"  GET {url}")
     try:
-        r = requests.get(f"{BASE}{path}", timeout=timeout)
-        return r.text.strip() if r.status_code == 200 else None
-    except requests.ConnectionError:
+        r = requests.get(url, timeout=timeout)
+        text = r.text.strip()
+        if debug:
+            print(f"  -> HTTP {r.status_code}: {text[:80]!r}")
+        return text if r.status_code == 200 else None
+    except Exception as e:
+        if debug:
+            print(f"  -> ERROR: {e}")
         return None
 
 
+MARKERS_FILE = "/tmp/take_markers.json"
+
 def get_markers():
-    count_text = _get_text("/GET/MARKER/COUNT")
-    if count_text is None:
+    # Populated by take_export_markers.lua — run it in Reaper via
+    # Actions → Run ReaScript → take_export_markers.lua whenever the project changes.
+    import json, os
+    if not os.path.exists(MARKERS_FILE):
         return []
     try:
-        count = int(count_text)
-    except ValueError:
+        with open(MARKERS_FILE) as f:
+            return json.load(f)
+    except Exception:
         return []
-    markers = []
-    for n in range(count):
-        name     = _get_text(f"/GET/MARKER/{n}/NAME") or ""
-        pos_text = _get_text(f"/GET/MARKER/{n}/POSITION")
-        try:
-            position = float(pos_text) if pos_text else 0.0
-        except ValueError:
-            position = 0.0
-        if name:
-            markers.append({"name": name, "position": position})
-    return markers
 
 
 def get_tracks():

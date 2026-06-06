@@ -278,19 +278,19 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     <div className="eng-shell">
       <div className="eng-wrap">
         {/* Header */}
-        <div className="eng-hdr">
+        <div className="eng-hdr" style={{ WebkitAppRegion: "drag" }}>
           <div className="eng-logo">T<span>ake</span></div>
           {dotList.map(([dot, label]) => (
-            <div key={label} className="eng-conn"><div className={`dot ${dot}`} />{label}</div>
+            <div key={label} className="eng-conn" style={{ WebkitAppRegion: "no-drag" }}><div className={`dot ${dot}`} />{label}</div>
           ))}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 9 }}>
             {recording
               ? <><div className="dot r" /><span style={{ color: C.red }}>T{takeCount} recording</span></>
               : <span style={{ color: C.muted }}>{displayCode}</span>}
-            <span style={{ color: showDetails ? C.blue : C.muted, cursor: "pointer" }} onClick={() => setShowDetails(d => !d)}>Details</span>
+            <span style={{ color: showDetails ? C.blue : C.muted, cursor: "pointer", WebkitAppRegion: "no-drag" }} onClick={() => setShowDetails(d => !d)}>Details</span>
             <span
               onClick={handleEndSession}
-              style={{ color: C.red, border: `1px solid #5c1a1a`, background: "#1a0808", borderRadius: 4, padding: "2px 7px", cursor: "pointer" }}
+              style={{ color: C.red, border: `1px solid #5c1a1a`, background: "#1a0808", borderRadius: 4, padding: "2px 7px", cursor: "pointer", WebkitAppRegion: "no-drag" }}
             >End session</span>
           </div>
         </div>
