@@ -19,7 +19,7 @@ def _get_quality():
         with open(QUALITY_FILE) as fh:
             return fh.read().strip()
     except OSError:
-        return "AAC256"
+        return "AAC128"
 
 
 def _decode(data):
@@ -42,6 +42,8 @@ def run_stream_receiver(stop_event):
     audio = pyaudio.PyAudio()
     stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
                         output=True, frames_per_buffer=CHUNK)
+
+    print(f"Stream receiver: UDP 0.0.0.0:{PORT} → DSP → output")
 
     try:
         while not stop_event.is_set():

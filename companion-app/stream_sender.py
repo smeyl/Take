@@ -16,7 +16,7 @@ RATE = 44100
 CHANNELS = 1
 QUALITY_FILE = "/tmp/take_stream_quality"
 
-stream_quality = "AAC256"  # "AAC128" | "AAC256" | "FLAC"
+stream_quality = "AAC128"  # "AAC128" | "AAC256" | "FLAC"
 
 app = Flask(__name__)
 CORS(app)

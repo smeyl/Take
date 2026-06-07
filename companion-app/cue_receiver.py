@@ -39,9 +39,10 @@ def process_audio(samples):
     audio_2d  = samples.astype(np.float32) / 32768.0
     audio_2d  = audio_2d.reshape(1, -1)
     processed = _board(audio_2d, sample_rate=RATE, reset=False)  # (1, n_samples) float32
+    processed = np.clip(processed, -1.0, 1.0)  # hard limit pedalboard output before volume
     result    = processed[0]
-    result   *= params["volume"] / 100.0
-    out       = (np.clip(result, -1.0, 1.0) * 32767.0).astype(np.int16)
+    result   *= params["volume"] / 100.0        # vol_gain: 0.0–1.0, never amplifies above unity
+    out = (result * 32767.0).astype(np.int16)
 
     return out
 

@@ -125,6 +125,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown())
     signal.signal(signal.SIGTERM, lambda sig, frame: shutdown())
 
+    print("Starting stream receiver...")
     threads = [
         threading.Thread(target=run_watcher, name="watcher", daemon=True),
         threading.Thread(target=run_stream, args=(cue_receiver.params,), name="stream", daemon=True),
