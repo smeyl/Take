@@ -4,10 +4,11 @@ import os
 import queue
 import threading
 from datetime import datetime
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import numpy as np
 import pyaudio
+import requests
 import soundfile as sf
 import cue_receiver
 
@@ -18,6 +19,10 @@ PORT = 5004
 RATE = 44100
 CHANNELS = 1
 _SYNC_FORMAT_FILE = "/tmp/take_sync_format"
+
+# Relay on the engineer's machine — set by start_artist.py once the session is
+# joined. Reaper transport commands must run there, not on this machine.
+RELAY_URL = "http://127.0.0.1:5010"
 
 
 def _get_sync_format():
@@ -40,7 +45,6 @@ _write_queue = queue.Queue()
 _stream_queue = queue.Queue(maxsize=32)  # mic audio for run_stream_from_transport
 _stop_writer = threading.Event()
 _writer_thread = None
-_rec_chunk_count = 0
 
 
 def _get_dest_track():
@@ -53,18 +57,15 @@ def _get_dest_track():
 
 def _reaper_start(track):
     try:
-        import reaper
-        reaper.arm_track_by_index(track)
-        reaper.start_recording()
-    except Exception:
+        requests.post(f"{RELAY_URL}/reaper/record", json={"track": track}, timeout=5)
+    except requests.RequestException:
         pass
 
 
 def _reaper_stop():
     try:
-        import reaper
-        reaper.stop_recording()
-    except Exception:
+        requests.post(f"{RELAY_URL}/reaper/stop", timeout=5)
+    except requests.RequestException:
         pass
 
 
@@ -146,16 +147,19 @@ def _audio_thread():
 
         # Recording feed — only when active
         if _recording:
-            global _rec_chunk_count
             chunk = mono.astype(np.float32) / 32768.0
-            chunk *= 0.5
-            _rec_chunk_count += 1
-            if _rec_chunk_count % 100 == 0:
-                print(f"[rec] max after gain: {np.abs(chunk).max():.4f}", flush=True)
             _write_queue.put(chunk.reshape(-1, CHANNELS).copy())
 
-        # Stream feed — always running, consumed by run_stream_from_transport()
-        _stream_queue.put(mono)
+        # Stream feed — consumed by run_stream_from_transport(). Never block
+        # the audio thread: if the consumer stalls, drop the oldest chunk.
+        try:
+            _stream_queue.put_nowait(mono)
+        except queue.Full:
+            try:
+                _stream_queue.get_nowait()
+                _stream_queue.put_nowait(mono)
+            except (queue.Empty, queue.Full):
+                pass
 
     stream.stop_stream()
     stream.close()
@@ -177,7 +181,10 @@ def record():
         _take += 1
         os.makedirs(RECORDINGS_PATH, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        fmt = _get_sync_format()
+        # Format and Reaper track come from the relay proxy (engineer machine);
+        # the /tmp fallbacks only work when both roles share one machine.
+        data = request.get_json(force=True, silent=True) or {}
+        fmt = data.get("format") or _get_sync_format()
         if fmt == "FLAC":
             path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.flac")
             _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS,
@@ -192,8 +199,10 @@ def record():
         _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
         _writer_thread.start()
         _recording = True
-        track = _get_dest_track()
-        threading.Thread(target=_reaper_start, args=(track,), daemon=True).start()
+        track = data.get("track")
+        if track is None:
+            track = _get_dest_track()
+        threading.Thread(target=_reaper_start, args=(int(track),), daemon=True).start()
         print(f"Recording started — T{_take} at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} (Reaper track {track})", flush=True)
         return jsonify({"recording": True, "take": _take})
 

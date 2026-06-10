@@ -3,7 +3,7 @@ import C from "../constants/colors";
 
 const RELAY         = "http://localhost:5010";
 const FILE_RECEIVER = "http://localhost:5001";
-const TRANSPORT     = "http://localhost:5004";
+const TRANSPORT     = `${RELAY}/artist`;  // proxied to the artist's machine
 
 function fmtSize(bytes) {
   if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
@@ -55,11 +55,12 @@ export default function DetailsPanel({ onClose, sessionCode }) {
         if (r.ok) reaper = Boolean((await r.json()).reachable);
       } catch {}
 
-      // Transport: any response
+      // Transport: must be 2xx — the relay proxy returns 404/502 when the
+      // artist isn't connected, which would otherwise read as "up"
       let transport = false;
       try {
-        await fetch(`${TRANSPORT}/status`, { signal: AbortSignal.timeout(2000) });
-        transport = true;
+        const r = await fetch(`${TRANSPORT}/status`, { signal: AbortSignal.timeout(2000) });
+        transport = r.ok;
       } catch {}
 
       setConns({ relay, file, artist, reaper, transport });

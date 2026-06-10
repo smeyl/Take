@@ -48,7 +48,7 @@ cd engineer-app
 npm run start
 ```
 
-Open `http://localhost:3000` in your browser.
+`npm run start` launches the Vite dev server and the Electron shell together. (To use a browser instead, open `http://localhost:5173`.)
 
 ### Artist (native macOS app + Python backend)
 
@@ -63,6 +63,16 @@ Or to launch the compiled app bundle alongside the backend:
 cd companion-app
 ./start_take_artist.sh
 ```
+
+### Two machines
+
+The relay (port 5010) runs on the engineer's machine. The artist's backend finds it via the session file written by the Take app, or you can point it there explicitly:
+
+```bash
+TAKE_RELAY_HOST=<engineer-ip> ./dev_artist.sh
+```
+
+Both machines must be reachable on ports 5001–5010 (same LAN or VPN).
 
 ## Reaper setup
 

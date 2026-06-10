@@ -7,12 +7,15 @@ import time
 import threading
 import requests
 
-RELAY_URL = "http://127.0.0.1:5010"
+# The relay runs on the engineer's machine. The host is resolved at startup
+# from the JUCE session file, TAKE_RELAY_HOST, or a prompt — see below.
+RELAY_PORT = 5010
 
 import watcher
 import artist
 import backing_player
 import cue_receiver
+import receiver
 import stream_receiver
 import stream_sender
 import timecode
@@ -88,12 +91,30 @@ def _read_session_file():
     return None, None
 
 
+def run_file_receiver():
+    """Receives the engineer's bounced backing track on port 5001.
+    In single-machine dev the engineer's receiver already owns the port (and
+    writes to the same incoming/ directory), so a failed bind is fine."""
+    try:
+        receiver.app.run(host="0.0.0.0", port=receiver.PORT, use_reloader=False)
+    except OSError:
+        print(f"File receiver: port {receiver.PORT} in use — assuming single-machine dev", flush=True)
+
+
 if __name__ == "__main__":
     print("Waiting for session code from JUCE app...", flush=True)
     TARGET_IP, code = _read_session_file()
 
     if TARGET_IP is None:
         code = input("Enter session code: ")
+
+    # The relay lives on the engineer's machine. Resolution order:
+    # TAKE_RELAY_HOST env var → engineer IP from the session file → prompt.
+    relay_host = os.environ.get("TAKE_RELAY_HOST") or TARGET_IP
+    if not relay_host:
+        relay_host = input("Enter engineer IP (blank for localhost): ").strip() or "127.0.0.1"
+    RELAY_URL = f"http://{relay_host}:{RELAY_PORT}"
+    print(f"Relay: {RELAY_URL}")
 
     local_ip = get_local_ip()
 
@@ -118,6 +139,7 @@ if __name__ == "__main__":
 
     watcher.TARGET_IP = TARGET_IP
     artist.TARGET_IP = TARGET_IP
+    transport.RELAY_URL = RELAY_URL  # Reaper record/stop commands route through the relay
 
     shutdown_reason = [None]
 
@@ -150,6 +172,7 @@ if __name__ == "__main__":
             name="stream-quality",
             daemon=True,
         ),
+        threading.Thread(target=run_file_receiver, name="file-receiver", daemon=True),
         threading.Thread(
             target=run_heartbeat,
             args=(RELAY_URL, code, stop_event,
@@ -173,6 +196,7 @@ if __name__ == "__main__":
     print(f"  Transport       : 0.0.0.0:{transport.PORT}")
     print(f"  Timecode        : UDP 0.0.0.0:{timecode.PORT}")
     print(f"  Stream quality  : 0.0.0.0:{stream_sender.FLASK_PORT}")
+    print(f"  File receiver   : 0.0.0.0:{receiver.PORT} → backing track")
     print("Press Ctrl+C to stop.\n")
 
     stop_event.wait()

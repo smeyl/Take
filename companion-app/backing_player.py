@@ -15,26 +15,44 @@ SYNC_INTERVAL = 0.5   # seconds between drift checks
 DRIFT_LIMIT   = 2.0   # seconds before we seek
 
 
+def _file_changed(loaded_mtime):
+    try:
+        return os.path.getmtime(BACKING_PATH) != loaded_mtime
+    except OSError:
+        return False
+
+
 def run_backing_player():
     while not stop_event.is_set():
         if not os.path.exists(BACKING_PATH):
             time.sleep(1)
             continue
 
-        data, samplerate = sf.read(BACKING_PATH, dtype="float32")
+        try:
+            loaded_mtime = os.path.getmtime(BACKING_PATH)
+            data, samplerate = sf.read(BACKING_PATH, dtype="float32")
+        except Exception as e:
+            # File may still be mid-upload — retry shortly
+            print(f"Backing track read failed ({e}) — retrying")
+            time.sleep(1)
+            continue
         if data.ndim == 1:
             data = data.reshape(-1, 1)
         total_samples = len(data)
         channels      = data.shape[1]
         print("Backing track loaded — waiting for timecode")
 
-        _play_loop(data, samplerate, total_samples, channels)
+        _play_loop(data, samplerate, total_samples, channels, loaded_mtime)
 
 
-def _play_loop(data, samplerate, total_samples, channels):
+def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
     while not stop_event.is_set():
         # Wait for Reaper to start playing
         while not stop_event.is_set() and not tc.state["playing"]:
+            if _file_changed(loaded_mtime):
+                print("Backing track updated — reloading")
+                time.sleep(0.5)  # let the upload finish
+                return
             time.sleep(SYNC_INTERVAL)
         if stop_event.is_set():
             return
@@ -63,6 +81,11 @@ def _play_loop(data, samplerate, total_samples, channels):
                 if not tc.state["playing"]:
                     print("Backing track — paused")
                     break
+
+                if _file_changed(loaded_mtime):
+                    print("Backing track updated — reloading")
+                    time.sleep(0.5)  # let the upload finish
+                    return
 
                 backing_sec = pos[0] / samplerate
                 drift       = abs(backing_sec - tc.state["pos"])

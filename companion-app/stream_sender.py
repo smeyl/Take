@@ -39,15 +39,35 @@ def set_stream_quality():
     return jsonify({"ok": True, "quality": stream_quality})
 
 
+# Wire format: 1 header byte identifying the payload encoding, then PCM data.
+# Without the header the receiver would play 24-bit/float packets as int16 noise.
+FMT_INT16   = b"\x00"
+FMT_INT24   = b"\x01"  # 24-bit packed as int32, left-shifted 8
+FMT_FLOAT32 = b"\x02"
+
+
 def encode(raw_bytes):
     """Encode raw int16 PCM bytes at the current stream_quality."""
     samples = np.frombuffer(raw_bytes, dtype=np.int16)
     if stream_quality == "AAC128":
-        return samples.tobytes()                                    # 16-bit PCM
+        return FMT_INT16 + samples.tobytes()
     elif stream_quality == "AAC256":
-        return (samples.astype(np.int32) << 8).tobytes()           # 24-bit packed as int32
-    else:                                                           # FLAC → 32-bit float
-        return (samples.astype(np.float32) / 32768.0).tobytes()
+        return FMT_INT24 + (samples.astype(np.int32) << 8).tobytes()
+    else:                                                           # FLAC
+        return FMT_FLOAT32 + (samples.astype(np.float32) / 32768.0).tobytes()
+
+
+def decode_to_int16(packet):
+    """Decode a stream packet back to raw int16 PCM bytes for playback."""
+    if not packet:
+        return b""
+    fmt, payload = packet[:1], packet[1:]
+    if fmt == FMT_INT24:
+        return (np.frombuffer(payload, dtype=np.int32) >> 8).astype(np.int16).tobytes()
+    if fmt == FMT_FLOAT32:
+        samples = np.clip(np.frombuffer(payload, dtype=np.float32), -1.0, 1.0)
+        return (samples * 32767.0).astype(np.int16).tobytes()
+    return payload  # FMT_INT16
 
 
 def run_flask():

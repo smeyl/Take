@@ -39,10 +39,12 @@ export default function SessionScreen({ onStart }) {
     stopPolling();
     setCreating(true);
     try {
+      // No ip in the body — the relay substitutes its own LAN IP, which is
+      // correct because the relay always runs on the engineer's machine.
       const r = await fetch(`${RELAY}/session/new`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ip: "127.0.0.1" }),
+        body: JSON.stringify({}),
       });
       setRawCode(r.ok ? (await r.json()).code : "");
     } catch {

@@ -30,7 +30,7 @@ def trigger_render():
     try:
         r = requests.get(f"{BASE}/_/{ACTION_RENDER}", timeout=10)
         return r.status_code == 200
-    except requests.ConnectionError:
+    except requests.RequestException:
         print("ERROR: Could not connect to Reaper — is it running?")
         return False
 
@@ -88,18 +88,24 @@ def _restore_track_selection(saved):
 
 def _do_bounce():
     global _bouncing, _last_result, _last_time
-    if os.path.exists(RENDER_OUTPUT):
-        os.remove(RENDER_OUTPUT)
-    saved_mutes = _apply_track_selection()
-    ok = trigger_render() and wait_for_render(RENDER_OUTPUT)
-    _restore_track_selection(saved_mutes)
-    if ok:
-        send_file(RENDER_OUTPUT, TARGET_IP)
-        _last_result = "ok"
-    else:
+    try:
+        if os.path.exists(RENDER_OUTPUT):
+            os.remove(RENDER_OUTPUT)
+        saved_mutes = _apply_track_selection()
+        ok = trigger_render() and wait_for_render(RENDER_OUTPUT)
+        _restore_track_selection(saved_mutes)
+        if ok:
+            send_file(RENDER_OUTPUT, TARGET_IP)
+            _last_result = "ok"
+        else:
+            _last_result = "error"
+    except Exception as e:
+        print(f"Bounce failed: {e}")
         _last_result = "error"
-    _last_time = datetime.now().isoformat()
-    _bouncing = False
+    finally:
+        # Always clear the flag — a crash mid-bounce must not lock out future bounces
+        _last_time = datetime.now().isoformat()
+        _bouncing = False
 
 
 @bounce_app.route("/bounce/tracks", methods=["POST"])

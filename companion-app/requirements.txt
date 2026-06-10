@@ -6,3 +6,4 @@ watchdog
 soundfile
 sounddevice
 numpy
+pedalboard

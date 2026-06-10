@@ -8,6 +8,7 @@ import pyaudio
 
 import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
+import stream_sender
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
 from reaper import BASE
@@ -107,8 +108,10 @@ def run_stream_receiver():
     try:
         while not stop_event.is_set():
             try:
-                data, _ = sock.recvfrom(CHUNK * 2)
-                _write_parallel(data, [default_stream, bh_stream])
+                # Largest packet: 1 header byte + CHUNK samples of float32
+                data, _ = sock.recvfrom(CHUNK * 4 + 1)
+                pcm = stream_sender.decode_to_int16(data)
+                _write_parallel(pcm, [default_stream, bh_stream])
             except socket.timeout:
                 continue
     finally:

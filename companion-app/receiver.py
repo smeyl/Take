@@ -22,16 +22,18 @@ def upload():
     if "file" not in request.files:
         return "No file in request", 400
     f = request.files["file"]
-    if not f.filename:
+    # basename() strips any path components so an upload can't escape INCOMING_PATH
+    filename = os.path.basename(f.filename or "")
+    if not filename:
         return "Empty filename", 400
     os.makedirs(INCOMING_PATH, exist_ok=True)
-    dest = os.path.join(INCOMING_PATH, f.filename)
+    dest = os.path.join(INCOMING_PATH, filename)
     f.save(dest)
     size = os.path.getsize(dest)
-    _received_takes.append({"name": f.filename, "size": size, "time": datetime.now().isoformat()})
-    print(f"Received: {f.filename} ({size} bytes)")
+    _received_takes.append({"name": filename, "size": size, "time": datetime.now().isoformat()})
+    print(f"Received: {filename} ({size} bytes)")
     if on_file_received:
-        on_file_received(f.filename, size)
+        on_file_received(filename, size)
     return "OK", 200
 
 

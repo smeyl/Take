@@ -44,6 +44,9 @@ def _insert_media_flow(filename):
         track_idx  = int(lines[1]) if len(lines) > 1 else selected_track
         with open(reaper.CMD_FILE, "w") as f:
             f.write(f"swap\n{filepath}\n{track_idx}\n{start_time:.6f}\n")
+        # Consume the start info so a later, unrelated file can't swap onto
+        # this take's position — it falls through to a plain insert instead.
+        os.remove(reaper.START_FILE)
         print(f"Reaper: swap queued — {filename} → track {track_idx} at {start_time:.3f}s")
         return
     except Exception as e:
@@ -57,8 +60,8 @@ def _insert_media_flow(filename):
             f.write(contents)
         requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
         print(f"Reaper: placed {filename} on timeline (track {selected_track})")
-    except requests.ConnectionError:
-        print(f"Reaper: connection failed — could not place {filename}")
+    except requests.RequestException as e:
+        print(f"Reaper: request failed — could not place {filename} ({e})")
 
 
 def _on_file_received(filename, size):

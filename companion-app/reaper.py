@@ -34,7 +34,7 @@ def _get(path, timeout=5):
     try:
         r = requests.get(url, timeout=timeout)
         return r.status_code
-    except requests.ConnectionError:
+    except requests.RequestException:
         print("  ERROR: Could not connect — is Reaper running with the web server enabled?")
         return None
 

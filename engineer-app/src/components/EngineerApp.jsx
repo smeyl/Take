@@ -5,10 +5,11 @@ import WaveCanvas from "./WaveCanvas";
 import DetailsPanel from "./DetailsPanel";
 
 const RELAY          = "http://localhost:5010";
-const TRANSPORT      = "http://localhost:5004";
 const FILE_RECEIVER  = "http://localhost:5001";
 const BOUNCE         = "http://localhost:5006";
-const STREAM_SENDER  = "http://localhost:5007";
+// Transport (5004) and stream quality (5007) run on the artist's machine —
+// the relay proxies these to the artist IP of the current session.
+const ARTIST         = `${RELAY}/artist`;
 
 export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [recording, setRecording]   = useState(false);
@@ -45,7 +46,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const handleRec = async () => {
     const endpoint = recording ? "stop" : "record";
     try {
-      const r = await fetch(`${TRANSPORT}/${endpoint}`, { method: "POST" });
+      const r = await fetch(`${ARTIST}/${endpoint}`, { method: "POST" });
       if (r.ok) {
         const data = await r.json();
         setRecording(data.recording);
@@ -56,7 +57,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
 
   const handleRTZ = async () => {
     try {
-      const r = await fetch(`${TRANSPORT}/stop`, { method: "POST" });
+      const r = await fetch(`${ARTIST}/stop`, { method: "POST" });
       if (r.ok) {
         const data = await r.json();
         setRecording(data.recording);
@@ -99,7 +100,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const handleStreamQ = async (label) => {
     setStreamQ(label);
     try {
-      await fetch(`${STREAM_SENDER}/stream-quality`, {
+      await fetch(`${ARTIST}/stream-quality`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ quality: STREAM_Q_MAP[label] }),
@@ -162,7 +163,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   useEffect(() => {
     const pollTransport = async () => {
       try {
-        const r = await fetch(`${TRANSPORT}/status`);
+        const r = await fetch(`${ARTIST}/status`);
         if (r.ok) {
           const data = await r.json();
           setRecording(data.recording);
@@ -231,7 +232,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(`${TRANSPORT}/levels`);
+        const r = await fetch(`${ARTIST}/levels`);
         if (r.ok) setLevels(await r.json());
       } catch {}
     };
