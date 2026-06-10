@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -11,6 +12,16 @@ SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 on_file_received = None  # optional callback(filename, size) set by the host app
 sync_format = "WAV24"    # "WAV24" | "WAV32f" | "FLAC"
 _received_takes = []
+_takes_lock = threading.Lock()
+
+
+def update_take_status(filename, status):
+    """Thread-safe status update called by engineer.py after swap/insert."""
+    with _takes_lock:
+        for t in _received_takes:
+            if t["name"] == filename:
+                t["status"] = status
+                return
 
 app = Flask(__name__)
 CORS(app)
@@ -30,7 +41,13 @@ def upload():
     dest = os.path.join(INCOMING_PATH, filename)
     f.save(dest)
     size = os.path.getsize(dest)
-    _received_takes.append({"name": filename, "size": size, "time": datetime.now().isoformat()})
+    with _takes_lock:
+        _received_takes.append({
+            "name": filename,
+            "size": size,
+            "time": datetime.now().isoformat(),
+            "status": "syncing",
+        })
     print(f"Received: {filename} ({size} bytes)")
     if on_file_received:
         on_file_received(filename, size)
@@ -39,7 +56,8 @@ def upload():
 
 @app.route("/takes", methods=["GET"])
 def get_takes():
-    return jsonify(_received_takes)
+    with _takes_lock:
+        return jsonify(list(_received_takes))
 
 
 @app.route("/sync-format", methods=["POST"])

@@ -61,6 +61,7 @@ def _insert_media_flow(filename):
         # Consume the start info so a later, unrelated file can't swap onto
         # this take's position — it falls through to a plain insert instead.
         os.remove(reaper.START_FILE)
+        receiver.update_take_status(filename, "done")
         print(f"Reaper: swap queued — {filename} → track {track_idx} at {start_time:.3f}s")
         return
     except Exception as e:
@@ -73,6 +74,7 @@ def _insert_media_flow(filename):
         with open(TEMP_FILE, "w") as f:
             f.write(contents)
         requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
+        receiver.update_take_status(filename, "done")
         print(f"Reaper: placed {filename} on timeline (track {selected_track})")
     except requests.RequestException as e:
         print(f"Reaper: request failed — could not place {filename} ({e})")

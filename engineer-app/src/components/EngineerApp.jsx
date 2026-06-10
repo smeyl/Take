@@ -264,7 +264,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     const n = i + 1;
     const isLive = recording && n === takeCount;
     const received = receivedTakes.find(t => t.name.startsWith(`T${n}_`));
-    return { id: received ? received.name.split("_")[0] : `T${n}`, s: isLive ? "live" : "done" };
+    let status;
+    if (isLive)         status = "live";
+    else if (received)  status = received.status || "syncing";
+    else                status = "pending"; // recorded, file not yet arrived
+    return { id: received ? received.name.split("_")[0] : `T${n}`, s: status };
   });
 
   const lastFile = receivedTakes.length > 0 ? receivedTakes[receivedTakes.length - 1] : null;
@@ -328,21 +332,26 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                 {takes.length === 0 && (
                   <div style={{ fontSize: 9, color: C.dim, fontStyle: "italic" }}>No takes yet</div>
                 )}
-                {takes.map(t => (
-                  <div key={t.id} className={`take-row ${t.s === "live" ? "live" : ""}`}>
-                    <div className="take-num" style={{ color: t.s === "live" ? C.red : C.green }}>{t.id}</div>
-                    <div className="take-wave">
-                      <WaveCanvas
-                        width={110} height={20}
-                        color={t.s === "live" ? C.red : C.green}
-                        animated={t.s === "live"}
-                        progress={1}
-                      />
+                {takes.map(t => {
+                  const color = t.s === "live" ? C.red : t.s === "syncing" ? C.amber : t.s === "done" ? C.green : C.muted;
+                  return (
+                    <div key={t.id} className={`take-row ${t.s === "live" ? "live" : ""}`}>
+                      <div className="take-num" style={{ color }}>{t.id}</div>
+                      <div className="take-wave">
+                        <WaveCanvas
+                          width={110} height={20}
+                          color={color}
+                          animated={t.s === "live"}
+                          progress={1}
+                        />
+                      </div>
+                      {t.s === "done"    && <div className="take-badge tb-wav">WAV</div>}
+                      {t.s === "live"    && <div className="take-badge tb-live">LIVE</div>}
+                      {t.s === "syncing" && <div className="take-badge tb-sync">SYNC</div>}
+                      {t.s === "pending" && <div className="take-badge" style={{ color: C.muted, borderColor: C.dim, background: "transparent" }}>···</div>}
                     </div>
-                    {t.s === "done" && <div className="take-badge tb-wav">WAV</div>}
-                    {t.s === "live" && <div className="take-badge tb-live">LIVE</div>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
             <div>
