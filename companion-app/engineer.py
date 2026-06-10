@@ -24,14 +24,37 @@ def get_tracks_route():
 def select_track_route(index):
     global selected_track
     selected_track = index
+    try:
+        with open("/tmp/take_dest_track", "w") as f:
+            f.write(str(index))
+    except OSError:
+        pass
     return jsonify({"ok": True, "selected_track": selected_track})
 
 
 def _insert_media_flow(filename):
     filepath = os.path.join(INCOMING_PATH, filename)
+
+    # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
+    # Requires take_reaper_poll.lua running in Reaper and a prior recording in this session.
     try:
+        with open(reaper.START_FILE) as f:
+            lines = f.read().strip().split("\n")
+        start_time = float(lines[0])
+        track_idx  = int(lines[1]) if len(lines) > 1 else selected_track
+        with open(reaper.CMD_FILE, "w") as f:
+            f.write(f"swap\n{filepath}\n{track_idx}\n{start_time:.6f}\n")
+        print(f"Reaper: swap queued — {filename} → track {track_idx} at {start_time:.3f}s")
+        return
+    except Exception as e:
+        print(f"[swap] no record info available, falling back to insert ({e})")
+
+    # Fallback: insert as a new item (used before first recording or if Lua poll script not running)
+    try:
+        contents = filepath + "\n" + str(selected_track)
+        print(f"[insert_media] {TEMP_FILE}:\n  line1: {filepath}\n  line2: {selected_track}")
         with open(TEMP_FILE, "w") as f:
-            f.write(filepath + "\n" + str(selected_track))
+            f.write(contents)
         requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
         print(f"Reaper: placed {filename} on timeline (track {selected_track})")
     except requests.ConnectionError:

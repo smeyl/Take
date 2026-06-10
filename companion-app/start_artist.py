@@ -70,6 +70,13 @@ def _read_session_file():
             try:
                 with open(SESSION_FILE) as f:
                     data = json.load(f)
+                written_at_ms = data.get("written_at", 0)
+                age_s = (time.time() * 1000 - written_at_ms) / 1000
+                if written_at_ms and age_s > 60:
+                    print(f"Ignoring stale session file (age {age_s:.0f}s)")
+                    os.unlink(SESSION_FILE)
+                    time.sleep(1)
+                    continue
                 os.unlink(SESSION_FILE)
                 ip = data.get("engineer_ip", "")
                 code = data.get("code", "")

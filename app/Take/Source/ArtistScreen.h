@@ -1195,7 +1195,8 @@ public:
                 meterPoller.startThread();
 
             juce::File ("/tmp/take_session.json")
-                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code + "\"}");
+                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code
+                                  + "\",\"written_at\":" + juce::String (juce::Time::currentTimeMillis()) + "}");
         }
 
         repaint();

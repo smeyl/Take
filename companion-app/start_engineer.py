@@ -67,23 +67,56 @@ def check_reaper():
         return False
 
 
+def _find_blackhole_device(audio):
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if "BlackHole" in info.get("name", "") and info.get("maxOutputChannels", 0) > 0:
+            return i, info["name"]
+    return None, None
+
+
 def run_stream_receiver():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", STREAM_PORT))
     sock.settimeout(1.0)
     audio = pyaudio.PyAudio()
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                        output=True, frames_per_buffer=CHUNK)
+
+    bh_index, bh_name = _find_blackhole_device(audio)
+
+    bh_stream = None
+    if bh_index is not None:
+        try:
+            bh_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                                   output=True, output_device_index=bh_index,
+                                   frames_per_buffer=CHUNK)
+            print(f"Stream receiver: BlackHole → {bh_name} (Reaper input)")
+        except Exception as e:
+            print(f"Stream receiver: BlackHole open failed ({e})")
+
+    default_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                                output=True, frames_per_buffer=CHUNK)
+    print(f"Stream receiver: default output → speakers/headphones")
+
+    def _write_parallel(data, streams):
+        threads = [threading.Thread(target=s.write, args=(data,)) for s in streams if s]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
     try:
         while not stop_event.is_set():
             try:
                 data, _ = sock.recvfrom(CHUNK * 2)
-                stream.write(data)
+                _write_parallel(data, [default_stream, bh_stream])
             except socket.timeout:
                 continue
     finally:
-        stream.stop_stream()
-        stream.close()
+        default_stream.stop_stream()
+        default_stream.close()
+        if bh_stream:
+            bh_stream.stop_stream()
+            bh_stream.close()
         audio.terminate()
         sock.close()
 

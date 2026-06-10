@@ -13,6 +13,21 @@ ACTION_STOP         = 1016   # Transport: Stop
 ACTION_SELECT_LAST_TRACK = 40297  # Track: Select last track
 ACTION_ARM_TRACK         = 9      # Track: Toggle record arm for selected track
 
+# File-based IPC for transport control (web API action endpoints return 404 on this machine).
+# take_reaper_poll.lua must be running in Reaper (Actions > Run script...).
+CMD_FILE   = "/tmp/take_reaper_cmd"
+START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
+
+_pending_track = 0  # track stored by arm_track_by_index(), read by start_recording()
+
+
+def _write_cmd(lines):
+    try:
+        with open(CMD_FILE, "w") as f:
+            f.write("\n".join(str(l) for l in lines) + "\n")
+    except OSError as e:
+        print(f"  ERROR: could not write Reaper command: {e}")
+
 
 def _get(path, timeout=5):
     url = f"{BASE}{path}"
@@ -55,27 +70,29 @@ def get_markers():
         return []
 
 
+TRACKS_FILE = "/tmp/take_tracks.json"
+
 def get_tracks():
-    count_text = _get_text("/GET/TRACK/COUNT")
-    if count_text is None:
+    # Populated by take_export_tracks.lua — run it in Reaper via
+    # Actions → Run ReaScript → take_export_tracks.lua whenever the project changes.
+    import json, os
+    if not os.path.exists(TRACKS_FILE):
         return []
     try:
-        count = int(count_text)
-    except ValueError:
+        with open(TRACKS_FILE) as f:
+            return json.load(f)
+    except Exception:
         return []
-    tracks = []
-    for i in range(count):
-        name = _get_text(f"/GET/TRACK/{i}/P_NAME") or f"Track {i + 1}"
-        tracks.append({"index": i, "name": name})
-    return tracks
 
 
 def get_track_count():
-    text = _get_text("/GET/TRACK/COUNT")
-    try:
-        return int(text) if text else 0
-    except ValueError:
-        return 0
+    return len(get_tracks())
+
+
+def arm_track_by_index(n):
+    """Store track index for use by start_recording() — arming happens atomically in Lua."""
+    global _pending_track
+    _pending_track = n
 
 
 def get_track_muted(index):
@@ -102,10 +119,9 @@ def arm_track():
 
 
 def start_recording():
-    status = _get(f"/_/{ACTION_RECORD}")
-    ok = status == 200
-    print(f"start_recording: {'OK' if ok else 'FAILED'} (HTTP {status})")
-    return ok
+    _write_cmd(["record", _pending_track])
+    print(f"start_recording: queued via file IPC (track {_pending_track})")
+    return True
 
 
 def unarm_track():
@@ -116,10 +132,9 @@ def unarm_track():
 
 
 def stop_recording():
-    status = _get(f"/_/{ACTION_STOP}", timeout=15)
-    ok = status == 200
-    print(f"stop_recording : {'OK' if ok else 'FAILED'} (HTTP {status})")
-    return ok
+    _write_cmd(["stop"])
+    print(f"stop_recording : queued via file IPC")
+    return True
 
 
 if __name__ == "__main__":

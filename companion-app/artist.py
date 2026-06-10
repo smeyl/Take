@@ -1,18 +1,8 @@
 import os
-import socket
 import threading
 import time
-import numpy as np
-import pyaudio
 from watchdog.observers import Observer
-from watcher import AudioHandler, WATCH_PATH, TARGET_IP
-import stream_sender
-
-STREAM_PORT = 5002
-CHUNK = 1024
-RATE = 44100
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
+from watcher import AudioHandler, WATCH_PATH
 
 stop_event = threading.Event()
 
@@ -28,30 +18,15 @@ def run_watcher():
 
 
 def run_stream(params=None):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    audio = pyaudio.PyAudio()
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                        input=True, frames_per_buffer=CHUNK)
-    try:
-        while not stop_event.is_set():
-            data = stream.read(CHUNK, exception_on_overflow=False)
-            if params is not None:
-                gain = params["volume"] / 100.0
-                samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-                data = np.clip(samples * gain, -32768, 32767).astype(np.int16).tobytes()
-            sock.sendto(stream_sender.encode(data), (TARGET_IP, STREAM_PORT))
-    finally:
-        stream.stop_stream()
-        stream.close()
-        audio.terminate()
-        sock.close()
+    # Reads from transport._stream_queue (transport.py's single input stream)
+    # instead of opening a second PyAudio input, which fails on macOS CoreAudio.
+    import transport
+    transport.run_stream_from_transport()
 
 
 if __name__ == "__main__":
     print(f"Take — artist session started")
     print(f"  Watching : {WATCH_PATH}")
-    print(f"  Streaming : {TARGET_IP}:{STREAM_PORT}")
-    print(f"  Transfers : {TARGET_IP}:5001")
     print("Press Ctrl+C to stop.\n")
 
     threads = [

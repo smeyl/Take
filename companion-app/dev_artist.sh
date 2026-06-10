@@ -1,6 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
+rm -f /tmp/take_session.json
+
 # Kill any leftover processes on our ports
 lsof -ti :5002 | xargs kill -9 2>/dev/null
 lsof -ti :5003 | xargs kill -9 2>/dev/null
