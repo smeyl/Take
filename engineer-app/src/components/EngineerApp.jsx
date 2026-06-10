@@ -17,10 +17,6 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [dots, setDots]             = useState({ companion: false, server: false, artist: false, reaper: false });
   const [streamQ, setStreamQ]       = useState("AAC 256");
   const [syncFmt, setSyncFmt]       = useState("WAV 24");
-  const [autoSync, setAutoSync]     = useState(true);
-  const [placeTimeline, setPlaceTimeline] = useState(true);
-  const [notifySync, setNotifySync] = useState(false);
-  const [tracks, setTracks]         = useState({ drums: true, bass: true, keys: true });
   const [btQ, setBtQ]               = useState("MP3 256");
   const [showDetails, setShowDetails] = useState(false);
   const [receivedTakes, setReceivedTakes] = useState([]);
@@ -30,6 +26,15 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [destTracks, setDestTracks] = useState([]);
   const [destTrack, setDestTrack]   = useState(0);
   const [punchActive, setPunchActive] = useState(false);
+  // Set of track indices selected for the next bounce; initialised from destTracks.
+  const [bounceTracks, setBounceTracks] = useState(new Set());
+  const [autoSync, setAutoSync]         = useState(true);
+
+  // Initialise bounce selection whenever the track list loads.
+  useEffect(() => {
+    if (destTracks.length > 0)
+      setBounceTracks(new Set(destTracks.map(t => t.index)));
+  }, [destTracks]);
 
   const sendCue = async (param, value) => {
     try {
@@ -55,27 +60,15 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     } catch {}
   };
 
-  const handleRTZ = async () => {
-    try {
-      const r = await fetch(`${ARTIST}/stop`, { method: "POST" });
-      if (r.ok) {
-        const data = await r.json();
-        setRecording(data.recording);
-      }
-    } catch {}
-  };
-
-  const BOUNCE_TRACK_KEYS = ["drums", "bass", "keys"];
-
-  const handleBounceTrackToggle = async (key, checked) => {
-    const updated = { ...tracks, [key]: checked };
-    setTracks(updated);
-    const indices = BOUNCE_TRACK_KEYS.map((k, i) => updated[k] ? i : null).filter(i => i !== null);
+  const handleBounceTrackToggle = async (index, checked) => {
+    const updated = new Set(bounceTracks);
+    if (checked) updated.add(index); else updated.delete(index);
+    setBounceTracks(updated);
     try {
       await fetch(`${BOUNCE}/bounce/tracks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tracks: indices }),
+        body: JSON.stringify({ tracks: [...updated] }),
       });
     } catch {}
   };
@@ -147,6 +140,18 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       } catch {}
       setPunchActive(true);
     }
+  };
+
+  const handleAutoSync = async () => {
+    const next = !autoSync;
+    setAutoSync(next);
+    try {
+      await fetch(`${RELAY}/auto-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+    } catch {}
   };
 
   const handleBounce = async () => {
@@ -361,11 +366,12 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             </div>
             <div>
               <div className="sec-label">Transport</div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                <div className={`ebtn ebtn-rec ${recording ? "on" : ""}`} style={{ flex: 1 }} onClick={handleRec}>
-                  {recording ? "■ Stop" : "● Rec"}
-                </div>
-                <div className="ebtn ebtn-ghost" style={{ flex: 1 }} onClick={handleRTZ}>↩ RTZ</div>
+              <div
+                className={`ebtn ebtn-rec ${recording ? "on" : ""}`}
+                style={{ width: "100%", textAlign: "center", marginBottom: 6 }}
+                onClick={handleRec}
+              >
+                {recording ? "■ Stop" : "● Rec"}
               </div>
               <div
                 className={`ebtn ebtn-amber ${punchActive ? "on" : ""}`}
@@ -374,21 +380,19 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               >{punchActive ? "⊡ Punch active" : "⊡ Punch in/out"}</div>
             </div>
             <div>
-              <div className="sec-label">Sync</div>
-              <div className="sync-box">
-                <div className="sync-row"><span>Auto-sync lossless</span><div className={`toggle ${autoSync ? "on" : ""}`} onClick={() => setAutoSync(a => !a)} /></div>
-                <div className="sync-row"><span>Place on timeline</span><div className={`toggle ${placeTimeline ? "on" : ""}`} onClick={() => setPlaceTimeline(p => !p)} /></div>
-                <div className="sync-row"><span>Notify on sync</span><div className={`toggle ${notifySync ? "on" : ""}`} onClick={() => setNotifySync(n => !n)} /></div>
-              </div>
-              <div style={{ height: 6 }} />
               <div className="sec-label">Stream quality</div>
               <div className="pill-grp">{["AAC 128", "AAC 256", "FLAC"].map(q => <div key={q} className={`pill ${streamQ === q ? "on" : ""}`} onClick={() => handleStreamQ(q)}>{q}</div>)}</div>
-              <div style={{ height: 6 }} />
+              <div style={{ height: 8 }} />
               <div className="sec-label">Sync format</div>
               <div className="pill-grp">{["FLAC", "WAV 24", "WAV 32f"].map(f => <div key={f} className={`pill ${syncFmt === f ? "on" : ""}`} onClick={() => handleSyncFmt(f)}>{f}</div>)}</div>
-              <div style={{ height: 6 }} />
-              <div className="sync-now" style={{ opacity: autoSync ? 0.4 : 1, cursor: autoSync ? "default" : "pointer" }}>
-                {autoSync ? "Auto-sync enabled" : takeCount > 0 ? `Sync T${takeCount} now` : "No take to sync"}
+              <div style={{ height: 8 }} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span className="sec-label" style={{ marginBottom: 0 }}>Auto-sync</span>
+                <div
+                  className={`pill ${autoSync ? "on" : ""}`}
+                  style={{ cursor: "pointer", minWidth: 30, textAlign: "center" }}
+                  onClick={handleAutoSync}
+                >{autoSync ? "On" : "Off"}</div>
               </div>
             </div>
           </div>
@@ -414,21 +418,6 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               </div>
             ))}
 
-            <div>
-              <div className="group-label">
-                <div className="group-accent" style={{ background: C.blue }} />
-                <div className="group-text" style={{ color: C.blue }}>4-BAND EQ</div>
-              </div>
-              <div className="eq-wrap">
-                {[{ f: "80Hz", v: 55 }, { f: "400Hz", v: 48 }, { f: "2kHz", v: 70 }, { f: "8kHz", v: 65 }].map(b => (
-                  <div key={b.f} className="eq-band">
-                    <input className="eq-slider" type="range" min={0} max={100} defaultValue={b.v} />
-                    <div className="eq-freq">{b.f}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div style={{ marginTop: "auto" }}>
               <div className="group-label">
                 <div className="group-accent" style={{ background: C.green }} />
@@ -447,17 +436,28 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
           {/* Right col — backing track */}
           <div className="ecol" style={{ width: 190, flexShrink: 0 }}>
             <div className="sec-label">Backing track</div>
-            <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>Select Reaper tracks</div>
+            <div style={{ fontSize: 9, color: C.muted, marginBottom: 4 }}>
+              {dots.reaper ? "Select Reaper tracks to include" : "Reaper not connected"}
+            </div>
             <div className="track-check">
-              {[["drums", "01 — Drums"], ["bass", "02 — Bass"], ["keys", "03 — Keys"]].map(([k, name]) => (
-                <label key={k} className="track-item">
-                  <input type="checkbox" checked={tracks[k]} onChange={e => handleBounceTrackToggle(k, e.target.checked)} style={{ accentColor: C.blue }} />
-                  <span style={{ color: tracks[k] ? C.body : C.muted }}>{name}</span>
-                </label>
-              ))}
-              <div style={{ fontSize: 9, color: C.dim, fontStyle: "italic" }}>
-                {dots.reaper ? "Loaded from Reaper" : "Reaper not connected"}
-              </div>
+              {destTracks.length === 0
+                ? <div style={{ fontSize: 9, color: C.dim, fontStyle: "italic" }}>
+                    {dots.reaper ? "No tracks found" : "Connect Reaper to load tracks"}
+                  </div>
+                : destTracks.map(t => (
+                    <label key={t.index} className="track-item">
+                      <input
+                        type="checkbox"
+                        checked={bounceTracks.has(t.index)}
+                        onChange={e => handleBounceTrackToggle(t.index, e.target.checked)}
+                        style={{ accentColor: C.blue }}
+                      />
+                      <span style={{ color: bounceTracks.has(t.index) ? C.body : C.muted }}>
+                        {t.name || `Track ${t.index + 1}`}
+                      </span>
+                    </label>
+                  ))
+              }
             </div>
             <div style={{ height: 8 }} />
             <div className="sec-label">Bounce quality</div>

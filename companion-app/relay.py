@@ -20,6 +20,7 @@ sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 
 timecode_state = {"pos": 0.0, "playing": False}
 punch_state    = {"in": 0.0, "out": 0.0, "active": False}
+auto_sync      = True
 
 CHARS = string.ascii_uppercase + string.digits
 CUE_PORT = 5003
@@ -289,6 +290,20 @@ def set_punch():
         punch_state["out"]    = punch_out
         punch_state["active"] = punch_in > 0.0 or punch_out > 0.0
     return jsonify({"ok": True})
+
+
+@app.route("/auto-sync", methods=["GET"])
+def get_auto_sync():
+    return jsonify({"enabled": auto_sync})
+
+
+@app.route("/auto-sync", methods=["POST"])
+def set_auto_sync():
+    global auto_sync
+    data = request.get_json(force=True, silent=True) or {}
+    auto_sync = bool(data.get("enabled", True))
+    log(f"Auto-sync {'enabled' if auto_sync else 'disabled'}")
+    return jsonify({"enabled": auto_sync})
 
 
 @app.route("/markers", methods=["GET"])

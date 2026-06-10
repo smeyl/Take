@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 import requests
-from flask import jsonify
+from flask import jsonify, request as flask_request
 
 import receiver
 import reaper
@@ -11,6 +11,7 @@ from reaper import BASE
 
 ACTION_INSERT_MEDIA = "_RSb5c2380eebd5068bc425e17e9f920644a2f49be8"
 TEMP_FILE = "/tmp/take_incoming.txt"
+RELAY_URL = "http://127.0.0.1:5010"
 
 selected_track = 0
 
@@ -32,8 +33,21 @@ def select_track_route(index):
     return jsonify({"ok": True, "selected_track": selected_track})
 
 
+def _is_auto_sync_enabled():
+    try:
+        r = requests.get(f"{RELAY_URL}/auto-sync", timeout=2)
+        return r.ok and r.json().get("enabled", True)
+    except requests.RequestException:
+        return True  # default to enabled if relay unreachable
+
+
 def _insert_media_flow(filename):
     filepath = os.path.join(INCOMING_PATH, filename)
+
+    if not _is_auto_sync_enabled():
+        take_label = filename.split("_")[0] if "_" in filename else filename
+        print(f"Auto-sync disabled — skipping swap for {take_label}")
+        return
 
     # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
     # Requires take_reaper_poll.lua running in Reaper and a prior recording in this session.
