@@ -27,6 +27,21 @@ namespace TakeUI
         };
         return pair() + " - " + pair() + " - " + pair();
     }
+
+    // Read the relay host from the session file written by start_artist.py.
+    // Falls back to 127.0.0.1 for single-machine dev (file not yet present,
+    // or the Python backend hasn't joined yet when JUCE opens).
+    inline juce::String readRelayHost()
+    {
+        auto f = juce::File ("/tmp/take_session.json");
+        if (! f.existsAsFile()) return "127.0.0.1";
+        auto json = juce::JSON::parse (f.loadFileAsString());
+        auto ip = json["engineer_ip"].toString();
+        // Loopback addresses are useless to the relay on another machine
+        if (ip.isEmpty() || ip.startsWith ("127.") || ip == "localhost")
+            return "127.0.0.1";
+        return ip;
+    }
 }
 
 //==============================================================================
@@ -643,6 +658,7 @@ class ArtistScreen : public juce::Component,
     {
     public:
         std::function<void(float, bool)> onResult;  // (pos, playing)
+        juce::String relayHost { "127.0.0.1" };
 
         TimecodePoller() : juce::Thread ("TakeTimecodePoller") {}
 
@@ -651,7 +667,7 @@ class ArtistScreen : public juce::Component,
             while (!threadShouldExit())
             {
                 juce::String body;
-                if (rawHttpGet ("127.0.0.1", 5010, "/timecode", body))
+                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/timecode", body))
                 {
                     auto json = juce::JSON::parse (body);
                     if (json.isObject())
@@ -896,6 +912,7 @@ class ArtistScreen : public juce::Component,
     {
     public:
         std::function<void(std::vector<Marker>)> onResult;
+        juce::String relayHost { "127.0.0.1" };
 
         MarkersPoller() : juce::Thread ("TakeMarkersPoller") {}
 
@@ -904,7 +921,7 @@ class ArtistScreen : public juce::Component,
             while (!threadShouldExit())
             {
                 juce::String body;
-                if (rawHttpGet ("127.0.0.1", 5010, "/markers", body))
+                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/markers", body))
                 {
                     auto arr = juce::JSON::parse (body);
                     if (arr.isArray())
@@ -979,6 +996,7 @@ class ArtistScreen : public juce::Component,
     {
     public:
         std::function<void(float, float, bool)> onResult;  // (in, out, active)
+        juce::String relayHost { "127.0.0.1" };
 
         PunchPoller() : juce::Thread ("TakePunchPoller") {}
 
@@ -987,7 +1005,7 @@ class ArtistScreen : public juce::Component,
             while (!threadShouldExit())
             {
                 juce::String body;
-                if (rawHttpGet ("127.0.0.1", 5010, "/punch", body))
+                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/punch", body))
                 {
                     auto json = juce::JSON::parse (body);
                     if (json.isObject())
@@ -1184,11 +1202,16 @@ public:
         companionConnected = ip.isNotEmpty();
         engineerConnected  = ip.isNotEmpty();
         detailsPanel.setEngineerConnected (engineerConnected);
+        detailsPanel.setRelayHost (ip);
 
         if (ip.isNotEmpty() && code.isNotEmpty())
         {
             relayCode = code;
-            heartbeatThread.setParams ("127.0.0.1", code);
+            relayHost = ip;
+            timecodePoller.relayHost = ip;
+            markersPoller.relayHost  = ip;
+            punchPoller.relayHost    = ip;
+            heartbeatThread.setParams (ip, code);
             heartbeatThread.startThread();
 
             if (!meterPoller.isThreadRunning())
@@ -1268,7 +1291,7 @@ public:
             if (!code.empty())
                 std::thread ([code]() {
                     std::string path = "/session/" + code;
-                    rawHttpDelete ("127.0.0.1", 5010, path.c_str());
+                    rawHttpDelete (relayHost.toRawUTF8(), 5010, path.c_str());
                 }).detach();
             if (onBack) onBack();
             return;
@@ -1475,6 +1498,7 @@ private:
     DetailsPanel    detailsPanel;
     juce::String    sessionCode { TakeUI::generateSessionCode() };
     juce::String    relayCode;
+    juce::String    relayHost   { "127.0.0.1" };  // set in setEngineerIP(); used by pollers and end-session
     RecordRing      recordRing;
     LevelMeter      levelMeter;
     TrackWindow     trackWindow;

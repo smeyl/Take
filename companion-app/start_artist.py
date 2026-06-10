@@ -137,6 +137,11 @@ if __name__ == "__main__":
     TARGET_IP = resp.json()["engineer_ip"]
     print(f"Engineer found — {TARGET_IP}")
 
+    # Write relay host so the JUCE app reads it before making its own join call
+    with open(SESSION_FILE, "w") as f:
+        json.dump({"engineer_ip": TARGET_IP, "code": code,
+                   "written_at": int(time.time() * 1000)}, f)
+
     watcher.TARGET_IP = TARGET_IP
     artist.TARGET_IP = TARGET_IP
     transport.RELAY_URL = RELAY_URL  # Reaper record/stop commands route through the relay

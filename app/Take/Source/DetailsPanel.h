@@ -25,18 +25,24 @@ public:
 
     void setEngineerConnected (bool v) { engineerOk = v; repaint(); }
 
+    void setRelayHost (const juce::String& host)
+    {
+        relayHost = host.isNotEmpty() ? host : "127.0.0.1";
+    }
+
     void timerCallback() override
     {
         juce::Component::SafePointer<DetailsPanel> safeThis (this);
+        juce::String rh = relayHost;
 
-        std::thread ([safeThis]()
+        std::thread ([safeThis, rh]()
         {
             bool compOk = false, srvOk = false;
             juce::String dummy, takesJson;
 
-            compOk = rawHttpGet ("127.0.0.1", 5010, "/session/active", dummy);
-            srvOk  = rawHttpGet ("127.0.0.1", 5001, "/",               dummy);
-            rawHttpGet ("127.0.0.1", 5001, "/takes", takesJson);
+            compOk = rawHttpGet (rh.toRawUTF8(), 5010, "/session/active", dummy);
+            srvOk  = rawHttpGet (rh.toRawUTF8(), 5001, "/",               dummy);
+            rawHttpGet (rh.toRawUTF8(), 5001, "/takes", takesJson);
 
             juce::StringArray rows;
             juce::int64 bytes = 0;
@@ -74,6 +80,7 @@ public:
     }
 
 private:
+    juce::String      relayHost   { "127.0.0.1" };
     bool              engineerOk  { false };
     bool              companionOk { false };
     bool              serverOk    { false };
@@ -244,7 +251,7 @@ private:
             totalBytes += sz;
 
             juce::String name = t["name"].toString();
-            juce::String ts   = t["timestamp"].toString();
+            juce::String ts   = t["time"].toString();  // receiver.py stores key "time"
 
             // Normalise to HH:MM:SS — strip ISO date prefix if present
             const int tIdx = ts.indexOf ("T");

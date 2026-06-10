@@ -191,7 +191,10 @@ private:
         std::thread ([code, ip, cb]() mutable
         {
             juce::String engineerIP;
-            const bool ok = rawHttpPost ("127.0.0.1", 5010, "/session/join",
+            // relay host: read from /tmp/take_session.json (written by start_artist.py
+            // once it has joined), fall back to 127.0.0.1 for single-machine dev.
+            juce::String relayHost = TakeUI::readRelayHost();
+            const bool ok = rawHttpPost (relayHost.toRawUTF8(), 5010, "/session/join",
                                          "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}",
                                          engineerIP);
 
