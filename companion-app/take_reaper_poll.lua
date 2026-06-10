@@ -2,9 +2,10 @@
 -- Run via Reaper: Actions > Run script... (stays running via reaper.defer)
 -- Copy to: ~/Library/Application Support/REAPER/Scripts/take_reaper_poll.lua
 --
--- Handles three commands written to /tmp/take_reaper_cmd by Python:
+-- Handles commands written to /tmp/take_reaper_cmd by Python:
 --   record\n{track_idx}          — arm track, save cursor pos, start recording
 --   stop                          — stop recording
+--   rtz                           — return to zero (project start)
 --   swap\n{filepath}\n{track_idx}\n{start_time}  — replace streamed item with lossless file
 
 local CMD_FILE   = "/tmp/take_reaper_cmd"
@@ -27,6 +28,11 @@ end
 
 local function handle_stop()
   reaper.Main_OnCommand(1016, 0)  -- Transport: Stop
+end
+
+local function handle_rtz()
+  reaper.SetEditCurPos(0, true, false)
+  reaper.Main_OnCommand(40042, 0)  -- Transport: Go to start of project
 end
 
 local function handle_swap(filepath, track_idx, start_time)
@@ -62,6 +68,8 @@ local function main()
       handle_record(tonumber(line2) or 0)
     elseif cmd == "stop" then
       handle_stop()
+    elseif cmd == "rtz" then
+      handle_rtz()
     elseif cmd == "swap" then
       -- line2 = filepath, line3 = track_idx, line4 = start_time
       handle_swap(line2, tonumber(line3) or 0, tonumber(line4) or 0)

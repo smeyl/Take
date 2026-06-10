@@ -4,8 +4,6 @@ import time
 import numpy as np
 from pedalboard import Pedalboard, Reverb, Delay, Compressor
 
-DEBUG = False
-
 PORT = 5003
 CHUNK = 1024
 RATE = 44100
@@ -62,19 +60,6 @@ def listen_for_cues():
             if name not in params:
                 continue
             params[name] = value
-            if DEBUG:
-                if name == "volume":
-                    print(f"  volume     → {value/100:.2f}x", flush=True)
-                elif name == "reverb":
-                    print(f"  reverb     → room {value/100*0.9:.2f}", flush=True)
-                elif name == "reverbMix":
-                    print(f"  reverb     → mix {value/100:.2f}", flush=True)
-                elif name == "delay":
-                    print(f"  delay      → {value/100:.2f}s", flush=True)
-                elif name == "delayMix":
-                    print(f"  delay      → mix {value/100:.2f}", flush=True)
-                elif name == "compression":
-                    print(f"  comp       → {value} (unused)", flush=True)
         except socket.timeout:
             continue
         except Exception as e:

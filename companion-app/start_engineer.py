@@ -1,3 +1,4 @@
+import os
 import signal
 import socket
 import sys
@@ -8,6 +9,8 @@ import pyaudio
 
 import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
+import ports
+import return_sender
 import stream_sender
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
@@ -126,8 +129,18 @@ def run_stream_receiver():
 
 if __name__ == "__main__":
     try:
+        ports.ensure_free([
+            (PORT,        "tcp", "file receiver"),
+            (5006,        "tcp", "bounce server"),
+            (STREAM_PORT, "udp", "artist mic stream"),
+        ])
+
         local_ip = get_local_ip()
-        resp = requests.post(f"{RELAY_URL}/session/new", json={"ip": local_ip})
+        session_body = {"ip": local_ip}
+        session_password = os.environ.get("TAKE_SESSION_PASSWORD", "").strip()
+        if session_password:
+            session_body["password"] = session_password
+        resp = requests.post(f"{RELAY_URL}/session/new", json=session_body)
         resp.raise_for_status()
         code = resp.json()["code"]
 
@@ -174,6 +187,9 @@ if __name__ == "__main__":
             ),
             threading.Thread(target=timecode.sender, args=(artist_ip, stop_event),
                              name="timecode", daemon=True),
+            threading.Thread(target=return_sender.run_return_sender,
+                             args=(artist_ip, stop_event),
+                             name="return-sender", daemon=True),
         ]
         for t in threads:
             t.start()

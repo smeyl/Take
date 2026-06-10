@@ -1,3 +1,4 @@
+import hashlib
 import random
 import socket as _socket
 import string
@@ -28,6 +29,10 @@ CUE_PORT = 5003
 
 def generate_code():
     return "".join(random.choices(CHARS, k=6))
+
+
+def _hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def get_local_ip():
@@ -62,14 +67,17 @@ def new_session():
     # The relay runs on the engineer's machine, so its own LAN IP is the
     # correct fallback when the caller is local or sends a loopback address.
     engineer_ip = _resolve_ip(data.get("ip") or request.remote_addr, get_local_ip())
+    password = (data.get("password") or "").strip()
     code = generate_code()
     sessions[code] = {
         "engineer_ip": engineer_ip,
         "artist_ip": None,
         "created_at": time.time(),
         "heartbeats": {"engineer": None, "artist": None},
+        "password_hash": _hash_password(password) if password else None,
     }
-    log(f"New session {code} — engineer {engineer_ip}")
+    log(f"New session {code} — engineer {engineer_ip}"
+        + (" (password protected)" if password else ""))
     return jsonify({"code": code})
 
 
@@ -95,6 +103,10 @@ def join_session():
     artist_ip = _resolve_ip(data.get("ip"), request.remote_addr)
     if code not in sessions:
         return jsonify({"error": "session not found"}), 404
+    pw_hash = sessions[code].get("password_hash")
+    if pw_hash and _hash_password((data.get("password") or "").strip()) != pw_hash:
+        log(f"Join rejected for session {code} — wrong password ({artist_ip})")
+        return jsonify({"error": "wrong password"}), 403
     sessions[code]["artist_ip"] = artist_ip
     engineer_ip = sessions[code]["engineer_ip"]
     log(f"Artist {artist_ip} joined session {code} — engineer is {engineer_ip}")
@@ -257,6 +269,12 @@ def reaper_stop():
     return jsonify({"ok": True})
 
 
+@app.route("/reaper/rtz", methods=["POST"])
+def reaper_rtz():
+    reaper.return_to_zero()
+    return jsonify({"ok": True})
+
+
 @app.route("/timecode", methods=["GET"])
 def get_timecode():
     return jsonify(timecode_state)
@@ -292,6 +310,16 @@ def set_punch():
     return jsonify({"ok": True})
 
 
+@app.route("/takes/<path:filename>/swap", methods=["POST"])
+def manual_take_swap(filename):
+    """Forward a manual swap request to the file receiver on this machine."""
+    try:
+        r = _requests.post(f"http://127.0.0.1:5001/takes/{filename}/swap", timeout=5)
+        return r.text, r.status_code, {"Content-Type": r.headers.get("Content-Type", "application/json")}
+    except _requests.RequestException as e:
+        return jsonify({"error": f"file receiver unreachable: {e}"}), 502
+
+
 @app.route("/auto-sync", methods=["GET"])
 def get_auto_sync():
     return jsonify({"enabled": auto_sync})
@@ -321,5 +349,7 @@ def reaper_status():
 
 
 if __name__ == "__main__":
+    import ports
+    ports.ensure_free([(5010, "tcp", "relay")])
     log("Take relay server starting on port 5010")
     app.run(host="0.0.0.0", port=5010)

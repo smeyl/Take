@@ -72,7 +72,7 @@ The relay (port 5010) runs on the engineer's machine. The artist's backend finds
 TAKE_RELAY_HOST=<engineer-ip> ./dev_artist.sh
 ```
 
-Both machines must be reachable on ports 5001–5010 (same LAN or VPN).
+Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [PORTS.md](PORTS.md) for the full port map; each startup script checks its ports and reports conflicts instead of failing silently.
 
 ## Reaper setup
 

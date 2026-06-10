@@ -39,19 +39,13 @@ def _get(path, timeout=5):
         return None
 
 
-def _get_text(path, timeout=5, debug=False):
+def _get_text(path, timeout=5):
     url = f"{BASE}{path}"
-    if debug:
-        print(f"  GET {url}")
     try:
         r = requests.get(url, timeout=timeout)
         text = r.text.strip()
-        if debug:
-            print(f"  -> HTTP {r.status_code}: {text[:80]!r}")
         return text if r.status_code == 200 else None
-    except Exception as e:
-        if debug:
-            print(f"  -> ERROR: {e}")
+    except Exception:
         return None
 
 
@@ -105,35 +99,30 @@ def set_track_muted(index, muted):
 
 def create_track():
     status = _get(f"/_/{ACTION_INSERT_TRACK}")
-    print(f"create_track   : {'OK' if status == 200 else 'FAILED'} (HTTP {status})")
-    sel_status = _get(f"/_/{ACTION_SELECT_LAST_TRACK}")
-    print(f"select_track   : {'OK' if sel_status == 200 else 'FAILED'} (HTTP {sel_status})")
+    _get(f"/_/{ACTION_SELECT_LAST_TRACK}")
     return status == 200
 
 
 def arm_track():
-    status = _get(f"/_/{ACTION_ARM_TRACK}")
-    ok = status == 200
-    print(f"arm_track      : {'OK' if ok else 'FAILED'} (HTTP {status})")
-    return ok
+    return _get(f"/_/{ACTION_ARM_TRACK}") == 200
 
 
 def start_recording():
     _write_cmd(["record", _pending_track])
-    print(f"start_recording: queued via file IPC (track {_pending_track})")
     return True
 
 
 def unarm_track():
-    status = _get(f"/_/{ACTION_ARM_TRACK}")
-    ok = status == 200
-    print(f"unarm_track    : {'OK' if ok else 'FAILED'} (HTTP {status})")
-    return ok
+    return _get(f"/_/{ACTION_ARM_TRACK}") == 200
 
 
 def stop_recording():
     _write_cmd(["stop"])
-    print(f"stop_recording : queued via file IPC")
+    return True
+
+
+def return_to_zero():
+    _write_cmd(["rtz"])
     return True
 
 

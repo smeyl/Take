@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 import requests
-from flask import jsonify, request as flask_request
+from flask import jsonify
 
 import receiver
 import reaper
@@ -41,10 +41,10 @@ def _is_auto_sync_enabled():
         return True  # default to enabled if relay unreachable
 
 
-def _insert_media_flow(filename):
+def _insert_media_flow(filename, force=False):
     filepath = os.path.join(INCOMING_PATH, filename)
 
-    if not _is_auto_sync_enabled():
+    if not force and not _is_auto_sync_enabled():
         take_label = filename.split("_")[0] if "_" in filename else filename
         print(f"Auto-sync disabled — skipping swap for {take_label}")
         return
@@ -64,13 +64,12 @@ def _insert_media_flow(filename):
         receiver.update_take_status(filename, "done")
         print(f"Reaper: swap queued — {filename} → track {track_idx} at {start_time:.3f}s")
         return
-    except Exception as e:
-        print(f"[swap] no record info available, falling back to insert ({e})")
+    except Exception:
+        pass  # no record info from this session — insert as a new item instead
 
     # Fallback: insert as a new item (used before first recording or if Lua poll script not running)
     try:
         contents = filepath + "\n" + str(selected_track)
-        print(f"[insert_media] {TEMP_FILE}:\n  line1: {filepath}\n  line2: {selected_track}")
         with open(TEMP_FILE, "w") as f:
             f.write(contents)
         requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
@@ -78,6 +77,17 @@ def _insert_media_flow(filename):
         print(f"Reaper: placed {filename} on timeline (track {selected_track})")
     except requests.RequestException as e:
         print(f"Reaper: request failed — could not place {filename} ({e})")
+
+
+@app.route("/takes/<path:filename>/swap", methods=["POST"])
+def manual_swap(filename):
+    """Engineer-triggered swap for takes skipped while auto-sync was off."""
+    filename = os.path.basename(filename)
+    filepath = os.path.join(INCOMING_PATH, filename)
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "file not found"}), 404
+    threading.Thread(target=_insert_media_flow, args=(filename, True), daemon=True).start()
+    return jsonify({"ok": True, "file": filename})
 
 
 def _on_file_received(filename, size):

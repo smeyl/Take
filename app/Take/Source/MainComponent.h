@@ -53,7 +53,8 @@ class RoleSelectScreen : public juce::Component,
                          public juce::TextEditor::Listener
 {
 public:
-    std::function<void(const juce::String&, const juce::String&)> onJoin;  // (engineerIP, rawCode)
+    // (engineerIP, rawCode, password)
+    std::function<void(const juce::String&, const juce::String&, const juce::String&)> onJoin;
 
     RoleSelectScreen()
     {
@@ -76,6 +77,31 @@ public:
         sessionCodeEditor.setJustification (juce::Justification::centred);
         sessionCodeEditor.addListener (this);
         addAndMakeVisible (sessionCodeEditor);
+
+        auto setupSmallEditor = [] (juce::TextEditor& ed, const juce::String& placeholder)
+        {
+            ed.setTextToShowWhenEmpty (placeholder, juce::Colour (0xFF3A3A45));
+            ed.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
+            ed.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
+            ed.setColour (juce::TextEditor::outlineColourId,        juce::Colour (0xFF222228));
+            ed.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xFF3A3A48));
+            ed.setCaretVisible (true);
+            ed.setFont (juce::Font (juce::FontOptions (12.0f)));
+            ed.setJustification (juce::Justification::centred);
+        };
+
+        setupSmallEditor (passwordEditor, "Password (optional)");
+        passwordEditor.setPasswordCharacter (0x2022);  // bullet
+        addAndMakeVisible (passwordEditor);
+
+        setupSmallEditor (relayHostEditor, "Engineer IP (auto)");
+        // Pre-fill from the session file written by start_artist.py, if present
+        {
+            auto known = TakeUI::readRelayHost();
+            if (known != "127.0.0.1")
+                relayHostEditor.setText (known, juce::dontSendNotification);
+        }
+        addAndMakeVisible (relayHostEditor);
 
         joinButton.setButtonText ("Join session");
         joinButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
@@ -116,8 +142,10 @@ public:
 
         subtitleLabel.setBounds (0,  228, w,   22);
         sessionCodeEditor.setBounds (cx, 266, 240, 46);
-        joinButton.setBounds        (cx, 328, 240, 46);
-        errorLabel.setBounds        (0,  382, w,   22);
+        passwordEditor.setBounds    (cx, 320, 240, 34);
+        relayHostEditor.setBounds   (cx, 362, 240, 34);
+        joinButton.setBounds        (cx, 412, 240, 46);
+        errorLabel.setBounds        (0,  466, w,   22);
     }
 
     // juce::TextEditor::Listener
@@ -181,36 +209,65 @@ private:
         joinButton.setEnabled (false);
         errorLabel.setVisible (false);
 
-        // Capture only value types and the onJoin callback - no "this" or SafePointer.
-        // onJoin is owned by MainComponent which outlives the request, so it's safe to
-        // call even if RoleSelectScreen has been destroyed by the time the thread finishes.
-        juce::String code = raw;
-        juce::String ip   = localIP;
+        // Capture value types, the onJoin callback, and a SafePointer for error
+        // feedback. onJoin is owned by MainComponent which outlives the request.
+        juce::String code     = raw;
+        juce::String ip       = localIP;
+        juce::String password = passwordEditor.getText().trim();
         auto cb = onJoin;
+        juce::Component::SafePointer<RoleSelectScreen> safeThis (this);
 
-        std::thread ([code, ip, cb]() mutable
+        // Relay host: typed IP wins; otherwise /tmp/take_session.json (written by
+        // start_artist.py once it has joined); 127.0.0.1 for single-machine dev.
+        juce::String relayHost = relayHostEditor.getText().trim();
+        if (relayHost.isEmpty())
+            relayHost = TakeUI::readRelayHost();
+
+        // Build the body with the JSON writer so passwords survive quoting
+        juce::String body;
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty ("code", code);
+            obj->setProperty ("ip", ip);
+            if (password.isNotEmpty())
+                obj->setProperty ("password", password);
+            body = juce::JSON::toString (juce::var (obj), true);
+        }
+
+        std::thread ([code, password, relayHost, body, cb, safeThis]() mutable
         {
             juce::String engineerIP;
-            // relay host: read from /tmp/take_session.json (written by start_artist.py
-            // once it has joined), fall back to 127.0.0.1 for single-machine dev.
-            juce::String relayHost = TakeUI::readRelayHost();
+            int statusCode = 0;
             const bool ok = rawHttpPost (relayHost.toRawUTF8(), 5010, "/session/join",
-                                         "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}",
-                                         engineerIP);
+                                         body, engineerIP, statusCode);
 
-            if (ok && cb)
-                juce::MessageManager::callAsync ([cb, engineerIP, code]()
+            juce::MessageManager::callAsync ([cb, safeThis, ok, statusCode,
+                                              engineerIP, code, password]() mutable
+            {
+                if (ok)
                 {
-                    cb (engineerIP, code);
-                });
+                    if (cb) cb (engineerIP, code, password);
+                    return;
+                }
+                if (safeThis == nullptr) return;
+                safeThis->joinButton.setEnabled (true);
+                safeThis->errorLabel.setText (
+                    statusCode == 403 ? "Wrong password"
+                  : statusCode == 404 ? "Session not found"
+                                      : "Could not reach the engineer",
+                    juce::dontSendNotification);
+                safeThis->errorLabel.setVisible (true);
+            });
         }).detach();
     }
 
     // POSIX HTTP POST - avoids juce::URL which fires internal assertions on connection failure.
     static bool rawHttpPost (const char* host, int port, const char* path,
-                             const juce::String& jsonBody, juce::String& responseIP)
+                             const juce::String& jsonBody, juce::String& responseIP,
+                             int& statusCode)
     {
         DBG ("rawHttpPost called: " + juce::String (host) + ":" + juce::String (port));
+        statusCode = 0;
 
         int fd = ::socket (AF_INET, SOCK_STREAM, 0);
         if (fd < 0) return false;
@@ -258,6 +315,11 @@ private:
         DBG ("rawHttpPost: constructing juce::String from buf");
         juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
 
+        // Status line: "HTTP/1.0 200 OK"
+        if (full.startsWith ("HTTP/"))
+            statusCode = full.fromFirstOccurrenceOf (" ", false, false)
+                             .upToFirstOccurrenceOf (" ", false, false).getIntValue();
+
         int sep = full.indexOf ("\r\n\r\n");
         DBG ("rawHttpPost: header sep=" + juce::String (sep));
         if (sep < 0) return false;
@@ -276,6 +338,8 @@ private:
     TakeLookAndFeel  laf;
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
+    juce::TextEditor passwordEditor;
+    juce::TextEditor relayHostEditor;
     juce::TextButton joinButton;
     juce::Label      errorLabel;
     bool             isFormattingCode { false };
@@ -298,6 +362,7 @@ private:
     Screen      currentScreen { Screen::ROLE_SELECT };
     juce::String engineerIP;
     juce::String rawCode;
+    juce::String sessionPassword;
     std::unique_ptr<juce::Component> screenComponent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

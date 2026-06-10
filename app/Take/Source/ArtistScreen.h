@@ -1197,7 +1197,8 @@ public:
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
     void setLevel       (float l, float r)          { levelMeter.setLevel (l, r); }
 
-    void setEngineerIP (const juce::String& ip, const juce::String& code)
+    void setEngineerIP (const juce::String& ip, const juce::String& code,
+                        const juce::String& password = {})
     {
         companionConnected = ip.isNotEmpty();
         engineerConnected  = ip.isNotEmpty();
@@ -1217,9 +1218,16 @@ public:
             if (!meterPoller.isThreadRunning())
                 meterPoller.startThread();
 
+            // Session file read by start_artist.py — includes the password so
+            // the Python backend can make its own authenticated join.
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty ("engineer_ip", ip);
+            obj->setProperty ("code", code);
+            if (password.isNotEmpty())
+                obj->setProperty ("password", password);
+            obj->setProperty ("written_at", juce::Time::currentTimeMillis());
             juce::File ("/tmp/take_session.json")
-                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code
-                                  + "\",\"written_at\":" + juce::String (juce::Time::currentTimeMillis()) + "}");
+                .replaceWithText (juce::JSON::toString (juce::var (obj), true));
         }
 
         repaint();
@@ -1288,12 +1296,25 @@ public:
         if (endSessionBtnBounds().expanded (4).contains (e.getPosition()))
         {
             auto code = relayCode.toStdString();
+            auto host = relayHost.toStdString();
             if (!code.empty())
-                std::thread ([code]() {
+                std::thread ([code, host]() {
                     std::string path = "/session/" + code;
-                    rawHttpDelete (relayHost.toRawUTF8(), 5010, path.c_str());
+                    rawHttpDelete (host.c_str(), 5010, path.c_str());
                 }).detach();
             if (onBack) onBack();
+            return;
+        }
+
+        if (mixToggleBounds().expanded (4).contains (e.getPosition()))
+        {
+            hearEngineerMix = !hearEngineerMix;
+            const bool on = hearEngineerMix;
+            std::thread ([on]() {
+                rawHttpPostJson ("127.0.0.1", 5004, "/return-stream",
+                                 on ? "{\"enabled\":true}" : "{\"enabled\":false}");
+            }).detach();
+            repaint();
             return;
         }
 
@@ -1335,6 +1356,50 @@ private:
     juce::Rectangle<int> detailsBtnBounds() const
     {
         return { contentWidth() - 58, getHeight() - 29, 44, 26 };
+    }
+
+    juce::Rectangle<int> mixToggleBounds() const
+    {
+        return { contentWidth() - 136, getHeight() - 29, 72, 26 };
+    }
+
+    static void rawHttpPostJson (const char* host, int port, const char* path,
+                                 const char* jsonBody)
+    {
+        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return;
+
+        struct timeval tv { 2, 0 };
+        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons ((uint16_t) port);
+        ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+        {
+            ::close (fd);
+            return;
+        }
+
+        const int bodyLen = (int) ::strlen (jsonBody);
+        char header[512];
+        ::snprintf (header, sizeof (header),
+                    "POST %s HTTP/1.0\r\n"
+                    "Host: %s\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: %d\r\n"
+                    "Connection: close\r\n"
+                    "\r\n",
+                    path, host, bodyLen);
+        ::send (fd, header, ::strlen (header), 0);
+        ::send (fd, jsonBody, (size_t) bodyLen, 0);
+
+        char tmp[64];
+        while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
+        ::close (fd);
     }
 
     static void rawHttpDelete (const char* host, int port, const char* path)
@@ -1480,16 +1545,30 @@ private:
             g.drawText ("Details", db, juce::Justification::centred);
         }
 
+        {
+            // "Hear engineer mix" toggle — Layer 2 return stream
+            auto mb = mixToggleBounds();
+            g.setColour (juce::Colour (hearEngineerMix ? 0xFF123524 : 0xFF1A1A1E));
+            g.fillRoundedRectangle (mb.toFloat(), 4.0f);
+            g.setColour (juce::Colour (hearEngineerMix ? 0xFF1D9E75 : 0xFF2A2A32));
+            g.drawRoundedRectangle (mb.toFloat(), 4.0f, 1.0f);
+            g.setFont (TakeUI::monoFont (9.0f));
+            g.setColour (hearEngineerMix ? juce::Colour (0xFF3DDC84)
+                                         : juce::Colour (0xFF5C5C6E));
+            g.drawText (hearEngineerMix ? "Mix ON" : "Mix OFF", mb,
+                        juce::Justification::centred);
+        }
+
         g.setFont (TakeUI::monoFont (11.0f));
         g.setColour (juce::Colour (0xFF5C5C6E));
         auto text = juce::String ("Latency ") + juce::String (latencyMs) + "ms"
-                    + "  |  Take T" + juce::String (recordRing.takeNumber)
-                    + "  |  Stream AAC 256";
-        g.drawText (text, 140, barY, contentWidth() - 198, 32,
+                    + "  |  T" + juce::String (recordRing.takeNumber);
+        g.drawText (text, 140, barY, contentWidth() - 284, 32,
                     juce::Justification::centredLeft);
     }
 
     bool            detailsVisible        { false };
+    bool            hearEngineerMix       { false };
     bool            companionConnected    { false };
     bool            serverConnected       { false };
     bool            engineerConnected     { false };

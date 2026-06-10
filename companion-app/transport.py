@@ -11,6 +11,7 @@ import pyaudio
 import requests
 import soundfile as sf
 import cue_receiver
+import stream_receiver
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -203,7 +204,7 @@ def record():
         if track is None:
             track = _get_dest_track()
         threading.Thread(target=_reaper_start, args=(int(track),), daemon=True).start()
-        print(f"Recording started — T{_take} at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} (Reaper track {track})", flush=True)
+        print(f"Recording started — T{_take} (Reaper track {track})", flush=True)
         return jsonify({"recording": True, "take": _take})
 
 
@@ -219,7 +220,7 @@ def stop():
         _sf_file.close()
         _sf_file = None
         threading.Thread(target=_reaper_stop, daemon=True).start()
-        print(f"Recording stopped — T{_take} saved at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}", flush=True)
+        print(f"Recording stopped — T{_take} saved", flush=True)
         return jsonify({"recording": False, "take": _take})
 
 
@@ -232,6 +233,15 @@ def status():
 @app.route("/levels", methods=["GET"])
 def get_levels():
     return jsonify(levels)
+
+
+@app.route("/return-stream", methods=["GET", "POST"])
+def return_stream():
+    """Toggle for the engineer's return mix (Layer 2) — set by the artist app."""
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        stream_receiver.enabled = bool(data.get("enabled", False))
+    return jsonify({"enabled": stream_receiver.enabled})
 
 
 @app.route("/cue/local/<param>/<int:value>", methods=["POST"])

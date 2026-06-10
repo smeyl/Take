@@ -15,7 +15,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [recording, setRecording]   = useState(false);
   const [takeCount, setTakeCount]   = useState(0);
   const [dots, setDots]             = useState({ companion: false, server: false, artist: false, reaper: false });
-  const [streamQ, setStreamQ]       = useState("AAC 256");
+  const [streamQ, setStreamQ]       = useState("PCM 16");
   const [syncFmt, setSyncFmt]       = useState("WAV 24");
   const [btQ, setBtQ]               = useState("MP3 256");
   const [showDetails, setShowDetails] = useState(false);
@@ -88,7 +88,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     onBack();
   };
 
-  const STREAM_Q_MAP = { "AAC 128": "AAC128", "AAC 256": "AAC256", "FLAC": "FLAC" };
+  const STREAM_Q_MAP = { "PCM 16": "PCM16", "PCM 24": "PCM24", "Float 32": "Float32" };
 
   const handleStreamQ = async (label) => {
     setStreamQ(label);
@@ -140,6 +140,18 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       } catch {}
       setPunchActive(true);
     }
+  };
+
+  const handleRTZ = async () => {
+    try {
+      await fetch(`${RELAY}/reaper/rtz`, { method: "POST" });
+    } catch {}
+  };
+
+  const handleManualSync = async (name) => {
+    try {
+      await fetch(`${RELAY}/takes/${encodeURIComponent(name)}/swap`, { method: "POST" });
+    } catch {}
   };
 
   const handleAutoSync = async () => {
@@ -268,7 +280,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     if (isLive)         status = "live";
     else if (received)  status = received.status || "syncing";
     else                status = "pending"; // recorded, file not yet arrived
-    return { id: received ? received.name.split("_")[0] : `T${n}`, s: status };
+    return {
+      id: received ? received.name.split("_")[0] : `T${n}`,
+      s: status,
+      name: received ? received.name : null,
+    };
   });
 
   const lastFile = receivedTakes.length > 0 ? receivedTakes[receivedTakes.length - 1] : null;
@@ -347,7 +363,16 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                       </div>
                       {t.s === "done"    && <div className="take-badge tb-wav">WAV</div>}
                       {t.s === "live"    && <div className="take-badge tb-live">LIVE</div>}
-                      {t.s === "syncing" && <div className="take-badge tb-sync">SYNC</div>}
+                      {t.s === "syncing" && (
+                        !autoSync && t.name
+                          ? <div
+                              className="take-badge tb-sync"
+                              style={{ cursor: "pointer" }}
+                              title="Place this take on the Reaper timeline"
+                              onClick={() => handleManualSync(t.name)}
+                            >Sync now</div>
+                          : <div className="take-badge tb-sync">SYNC</div>
+                      )}
                       {t.s === "pending" && <div className="take-badge" style={{ color: C.muted, borderColor: C.dim, background: "transparent" }}>···</div>}
                     </div>
                   );
@@ -382,15 +407,23 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               >
                 {recording ? "■ Stop" : "● Rec"}
               </div>
-              <div
-                className={`ebtn ebtn-amber ${punchActive ? "on" : ""}`}
-                style={{ width: "100%", textAlign: "center" }}
-                onClick={handlePunch}
-              >{punchActive ? "⊡ Punch active" : "⊡ Punch in/out"}</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <div
+                  className={`ebtn ebtn-amber ${punchActive ? "on" : ""}`}
+                  style={{ flex: 1, textAlign: "center" }}
+                  onClick={handlePunch}
+                >{punchActive ? "⊡ Punch active" : "⊡ Punch in/out"}</div>
+                <div
+                  className="ebtn ebtn-ghost"
+                  style={{ width: 52, textAlign: "center", flexShrink: 0 }}
+                  title="Return to zero — move the Reaper playhead to project start"
+                  onClick={handleRTZ}
+                >⏮ RTZ</div>
+              </div>
             </div>
             <div>
               <div className="sec-label">Stream quality</div>
-              <div className="pill-grp">{["AAC 128", "AAC 256", "FLAC"].map(q => <div key={q} className={`pill ${streamQ === q ? "on" : ""}`} onClick={() => handleStreamQ(q)}>{q}</div>)}</div>
+              <div className="pill-grp">{["PCM 16", "PCM 24", "Float 32"].map(q => <div key={q} className={`pill ${streamQ === q ? "on" : ""}`} onClick={() => handleStreamQ(q)}>{q}</div>)}</div>
               <div style={{ height: 8 }} />
               <div className="sec-label">Sync format</div>
               <div className="pill-grp">{["FLAC", "WAV 24", "WAV 32f"].map(f => <div key={f} className={`pill ${syncFmt === f ? "on" : ""}`} onClick={() => handleSyncFmt(f)}>{f}</div>)}</div>

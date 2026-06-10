@@ -16,7 +16,10 @@ RATE = 44100
 CHANNELS = 1
 QUALITY_FILE = "/tmp/take_stream_quality"
 
-stream_quality = "AAC128"  # "AAC128" | "AAC256" | "FLAC"
+stream_quality = "PCM16"  # "PCM16" | "PCM24" | "Float32"
+
+# Names used by pre-rename UI builds — same wire formats, honest labels now.
+_LEGACY_QUALITY = {"AAC128": "PCM16", "AAC256": "PCM24", "FLAC": "Float32"}
 
 app = Flask(__name__)
 CORS(app)
@@ -27,8 +30,9 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 def set_stream_quality():
     global stream_quality
     data = request.get_json(silent=True) or {}
-    q = data.get("quality", "AAC256")
-    if q not in ("AAC128", "AAC256", "FLAC"):
+    q = data.get("quality", "PCM16")
+    q = _LEGACY_QUALITY.get(q, q)
+    if q not in ("PCM16", "PCM24", "Float32"):
         return jsonify({"error": "invalid quality"}), 400
     stream_quality = q
     try:
@@ -49,11 +53,11 @@ FMT_FLOAT32 = b"\x02"
 def encode(raw_bytes):
     """Encode raw int16 PCM bytes at the current stream_quality."""
     samples = np.frombuffer(raw_bytes, dtype=np.int16)
-    if stream_quality == "AAC128":
+    if stream_quality == "PCM16":
         return FMT_INT16 + samples.tobytes()
-    elif stream_quality == "AAC256":
+    elif stream_quality == "PCM24":
         return FMT_INT24 + (samples.astype(np.int32) << 8).tobytes()
-    else:                                                           # FLAC
+    else:                                                           # Float32
         return FMT_FLOAT32 + (samples.astype(np.float32) / 32768.0).tobytes()
 
 
