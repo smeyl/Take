@@ -17,14 +17,12 @@ import artist
 import backing_player
 import cue_receiver
 import receiver
-import stream_receiver
 import stream_sender
 import timecode
 import transport
 from artist import run_watcher, run_stream, stop_event
 from backing_player import run_backing_player, BACKING_PATH
 from cue_receiver import listen_for_cues
-from stream_receiver import run_stream_receiver
 from watcher import WATCH_PATH
 
 STREAM_PORT = 5002
@@ -111,7 +109,6 @@ if __name__ == "__main__":
         (stream_sender.FLASK_PORT,  "tcp", "stream quality"),
         (cue_receiver.PORT,         "udp", "cue params"),
         (timecode.PORT,             "udp", "timecode"),
-        (stream_receiver.PORT,      "udp", "engineer return stream"),
     ])
 
     print("Waiting for session code from JUCE app...", flush=True)
@@ -181,11 +178,9 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown())
     signal.signal(signal.SIGTERM, lambda sig, frame: shutdown())
 
-    print("Starting stream receiver...")
     threads = [
         threading.Thread(target=run_watcher, name="watcher", daemon=True),
         threading.Thread(target=run_stream, args=(cue_receiver.params,), name="stream", daemon=True),
-        threading.Thread(target=run_stream_receiver, args=(stop_event,), name="stream-receiver", daemon=True),
         threading.Thread(target=run_backing_player, name="backing-player", daemon=True),
         threading.Thread(target=listen_for_cues, name="cue-receiver", daemon=True),
         threading.Thread(
@@ -217,7 +212,6 @@ if __name__ == "__main__":
     print(f"  Watching        : {WATCH_PATH}")
     print(f"  File transfer   : {TARGET_IP}:{FILE_PORT}")
     print(f"  Mic stream out  : {TARGET_IP}:{STREAM_PORT}")
-    print(f"  Engineer mix in : UDP 0.0.0.0:{stream_receiver.PORT} (toggle in artist app)")
     print(f"  Cue params      : UDP 0.0.0.0:{cue_receiver.PORT}")
     print(f"  Backing player  : {BACKING_PATH}")
     print(f"  Transport       : 0.0.0.0:{transport.PORT}")

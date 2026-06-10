@@ -10,7 +10,6 @@ import pyaudio
 import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
 import ports
-import return_sender
 import stream_sender
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
@@ -187,9 +186,6 @@ if __name__ == "__main__":
             ),
             threading.Thread(target=timecode.sender, args=(artist_ip, stop_event),
                              name="timecode", daemon=True),
-            threading.Thread(target=return_sender.run_return_sender,
-                             args=(artist_ip, stop_event),
-                             name="return-sender", daemon=True),
         ]
         for t in threads:
             t.start()

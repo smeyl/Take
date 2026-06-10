@@ -11,7 +11,6 @@ import pyaudio
 import requests
 import soundfile as sf
 import cue_receiver
-import stream_receiver
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -233,15 +232,6 @@ def status():
 @app.route("/levels", methods=["GET"])
 def get_levels():
     return jsonify(levels)
-
-
-@app.route("/return-stream", methods=["GET", "POST"])
-def return_stream():
-    """Toggle for the engineer's return mix (Layer 2) — set by the artist app."""
-    if request.method == "POST":
-        data = request.get_json(force=True, silent=True) or {}
-        stream_receiver.enabled = bool(data.get("enabled", False))
-    return jsonify({"enabled": stream_receiver.enabled})
 
 
 @app.route("/cue/local/<param>/<int:value>", methods=["POST"])
