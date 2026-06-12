@@ -7,7 +7,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
-PORT = 5001
+PORT = 5001         # engineer's receiver: takes uploaded by the artist
+ARTIST_PORT = 5009  # artist's receiver: backing track bounced by the engineer
 SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 TRACKS_FILE = "/tmp/take_tracks.json"
 

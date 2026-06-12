@@ -10,6 +10,7 @@ from flask_cors import CORS
 
 import reaper
 from reaper import BASE
+from receiver import ARTIST_PORT
 from sender import send_file
 
 TARGET_IP = "127.0.0.1"  # set by start_engineer.py after artist joins
@@ -95,7 +96,9 @@ def _do_bounce():
         ok = trigger_render() and wait_for_render(RENDER_OUTPUT)
         _restore_track_selection(saved_mutes)
         if ok:
-            send_file(RENDER_OUTPUT, TARGET_IP)
+            # Artist's file receiver — distinct port so it can never collide
+            # with the engineer's take receiver in single-machine dev
+            send_file(RENDER_OUTPUT, TARGET_IP, ARTIST_PORT)
             _last_result = "ok"
         else:
             _last_result = "error"
@@ -149,5 +152,5 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     print("Render complete. Sending to artist...")
-    send_file(RENDER_OUTPUT, TARGET_IP)
+    send_file(RENDER_OUTPUT, TARGET_IP, ARTIST_PORT)
     print("Backing track sent to artist")

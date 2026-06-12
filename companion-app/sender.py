@@ -2,17 +2,17 @@ import os
 import sys
 import requests
 
-PORT = 5001
+PORT = 5001  # engineer's take receiver (default); artist's receiver is 5009
 
 
-def send_file(filepath, host):
-    url = f"http://{host}:{PORT}/upload"
+def send_file(filepath, host, port=PORT):
+    url = f"http://{host}:{port}/upload"
     filename = os.path.basename(filepath)
     try:
         with open(filepath, "rb") as f:
             response = requests.post(url, files={"file": (filename, f)})
         if response.status_code == 200:
-            print(f"Sent: {filename} -> {host}:{PORT}")
+            print(f"Sent: {filename} -> {host}:{port}")
             return True
         print(f"Failed: {filename} — server returned {response.status_code}")
         return False
@@ -23,8 +23,9 @@ def send_file(filepath, host):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python sender.py <filepath> [host]")
+        print("Usage: python sender.py <filepath> [host] [port]")
         sys.exit(1)
     host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
-    success = send_file(sys.argv[1], host)
+    port = int(sys.argv[3]) if len(sys.argv) > 3 else PORT
+    success = send_file(sys.argv[1], host, port)
     sys.exit(0 if success else 1)

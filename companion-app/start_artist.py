@@ -91,21 +91,22 @@ def _read_session_file():
 
 
 def run_file_receiver():
-    """Receives the engineer's bounced backing track on port 5001.
-    In single-machine dev the engineer's receiver already owns the port (and
-    writes to the same incoming/ directory), so a failed bind is fine."""
+    """Receives the engineer's bounced backing track on port 5009.
+    Distinct from the engineer's take receiver (5001) so the two can coexist
+    on one machine — takes always reach the engineer's process."""
     try:
-        receiver.app.run(host="0.0.0.0", port=receiver.PORT, use_reloader=False)
+        receiver.app.run(host="0.0.0.0", port=receiver.ARTIST_PORT, use_reloader=False)
     except OSError:
-        print(f"File receiver: port {receiver.PORT} in use — assuming single-machine dev", flush=True)
+        print(f"FATAL: file receiver could not bind port {receiver.ARTIST_PORT} — "
+              f"another process owns it (lsof -i :{receiver.ARTIST_PORT}). "
+              f"Backing tracks will NOT arrive.", flush=True)
 
 
 if __name__ == "__main__":
-    # 5001 (file receiver) is deliberately not checked — in single-machine dev
-    # the engineer's receiver owns it and run_file_receiver() handles the clash.
     ports.ensure_free([
         (transport.PORT,            "tcp", "transport"),
         (stream_sender.FLASK_PORT,  "tcp", "stream quality"),
+        (receiver.ARTIST_PORT,      "tcp", "file receiver (backing track)"),
         (cue_receiver.PORT,         "udp", "cue params"),
         (timecode.PORT,             "udp", "timecode"),
     ])
@@ -206,7 +207,7 @@ if __name__ == "__main__":
     print(f"  Transport       : 0.0.0.0:{transport.PORT}")
     print(f"  Timecode        : UDP 0.0.0.0:{timecode.PORT}")
     print(f"  Stream quality  : 0.0.0.0:{stream_sender.FLASK_PORT}")
-    print(f"  File receiver   : 0.0.0.0:{receiver.PORT} → backing track")
+    print(f"  File receiver   : 0.0.0.0:{receiver.ARTIST_PORT} → backing track")
     print("Press Ctrl+C to stop.\n")
 
     stop_event.wait()
