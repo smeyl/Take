@@ -212,7 +212,6 @@ _ARTIST_ROUTES = {
 }
 
 _SYNC_FORMAT_FILE = "/tmp/take_sync_format"
-_DEST_TRACK_FILE  = "/tmp/take_dest_track"
 
 
 def _read_tmp(path, default):
@@ -235,10 +234,10 @@ def artist_proxy(endpoint):
     url = f"http://{artist_ip}:{port}{path}"
     payload = request.get_json(force=True, silent=True) or {}
     if endpoint == "record":
-        # Sync format and destination track live on this (engineer) machine;
-        # the artist's transport can't read them across the network.
+        # Sync format lives on this (engineer) machine; the artist's transport
+        # can't read it across the network. The destination track is no longer
+        # sent — take_session.lua always records onto the Take Session track.
         payload.setdefault("format", _read_tmp(_SYNC_FORMAT_FILE, "WAV24"))
-        payload.setdefault("track", int(_read_tmp(_DEST_TRACK_FILE, "0") or 0))
     try:
         if request.method == "POST":
             r = _requests.post(url, json=payload, timeout=5)
@@ -256,11 +255,9 @@ def artist_proxy(endpoint):
 
 @app.route("/reaper/record", methods=["POST"])
 def reaper_record():
-    data = request.get_json(force=True, silent=True) or {}
-    track = int(data.get("track", _read_tmp(_DEST_TRACK_FILE, "0") or 0))
-    reaper.arm_track_by_index(track)
+    # take_session.lua arms and records onto the Take Session track
     reaper.start_recording()
-    return jsonify({"ok": True, "track": track})
+    return jsonify({"ok": True})
 
 
 @app.route("/reaper/stop", methods=["POST"])

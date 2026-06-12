@@ -47,17 +47,9 @@ _stop_writer = threading.Event()
 _writer_thread = None
 
 
-def _get_dest_track():
+def _reaper_start():
     try:
-        with open("/tmp/take_dest_track") as f:
-            return int(f.read().strip())
-    except Exception:
-        return 0
-
-
-def _reaper_start(track):
-    try:
-        requests.post(f"{RELAY_URL}/reaper/record", json={"track": track}, timeout=5)
+        requests.post(f"{RELAY_URL}/reaper/record", timeout=5)
     except requests.RequestException:
         pass
 
@@ -199,11 +191,8 @@ def record():
         _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
         _writer_thread.start()
         _recording = True
-        track = data.get("track")
-        if track is None:
-            track = _get_dest_track()
-        threading.Thread(target=_reaper_start, args=(int(track),), daemon=True).start()
-        print(f"Recording started — T{_take} (Reaper track {track})", flush=True)
+        threading.Thread(target=_reaper_start, daemon=True).start()
+        print(f"Recording started — T{_take}", flush=True)
         return jsonify({"recording": True, "take": _take})
 
 

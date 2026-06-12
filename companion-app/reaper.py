@@ -14,12 +14,9 @@ ACTION_SELECT_LAST_TRACK = 40297  # Track: Select last track
 ACTION_ARM_TRACK         = 9      # Track: Toggle record arm for selected track
 
 # File-based IPC for transport control (web API action endpoints return 404 on this machine).
-# take_reaper_poll.lua must be running in Reaper (Actions > Run script...).
+# take_session.lua handles these — auto-started with Reaper via __startup.lua (see setup.sh).
 CMD_FILE   = "/tmp/take_reaper_cmd"
 START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
-
-_pending_track = 0  # track stored by arm_track_by_index(), read by start_recording()
-
 
 def _write_cmd(lines):
     try:
@@ -52,8 +49,7 @@ def _get_text(path, timeout=5):
 MARKERS_FILE = "/tmp/take_markers.json"
 
 def get_markers():
-    # Populated by take_export_markers.lua — run it in Reaper via
-    # Actions → Run ReaScript → take_export_markers.lua whenever the project changes.
+    # Kept current automatically by take_session.lua (re-exported on change)
     import json, os
     if not os.path.exists(MARKERS_FILE):
         return []
@@ -67,8 +63,7 @@ def get_markers():
 TRACKS_FILE = "/tmp/take_tracks.json"
 
 def get_tracks():
-    # Populated by take_export_tracks.lua — run it in Reaper via
-    # Actions → Run ReaScript → take_export_tracks.lua whenever the project changes.
+    # Kept current automatically by take_session.lua (re-exported on change)
     import json, os
     if not os.path.exists(TRACKS_FILE):
         return []
@@ -81,12 +76,6 @@ def get_tracks():
 
 def get_track_count():
     return len(get_tracks())
-
-
-def arm_track_by_index(n):
-    """Store track index for use by start_recording() — arming happens atomically in Lua."""
-    global _pending_track
-    _pending_track = n
 
 
 def get_track_muted(index):
@@ -108,7 +97,8 @@ def arm_track():
 
 
 def start_recording():
-    _write_cmd(["record", _pending_track])
+    # take_session.lua arms the Take Session track and starts the transport
+    _write_cmd(["record"])
     return True
 
 

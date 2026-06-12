@@ -13,24 +13,9 @@ ACTION_INSERT_MEDIA = "_RSb5c2380eebd5068bc425e17e9f920644a2f49be8"
 TEMP_FILE = "/tmp/take_incoming.txt"
 RELAY_URL = "http://127.0.0.1:5010"
 
-selected_track = 0
-
-
 @app.route("/tracks", methods=["GET"])
 def get_tracks_route():
     return jsonify(reaper.get_tracks())
-
-
-@app.route("/track/select/<int:index>", methods=["POST"])
-def select_track_route(index):
-    global selected_track
-    selected_track = index
-    try:
-        with open("/tmp/take_dest_track", "w") as f:
-            f.write(str(index))
-    except OSError:
-        pass
-    return jsonify({"ok": True, "selected_track": selected_track})
 
 
 def _is_auto_sync_enabled():
@@ -50,12 +35,12 @@ def _insert_media_flow(filename, force=False):
         return
 
     # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
-    # Requires take_reaper_poll.lua running in Reaper and a prior recording in this session.
+    # Requires take_session.lua running in Reaper and a prior recording in this session.
     try:
         with open(reaper.START_FILE) as f:
             lines = f.read().strip().split("\n")
         start_time = float(lines[0])
-        track_idx  = int(lines[1]) if len(lines) > 1 else selected_track
+        track_idx  = int(lines[1]) if len(lines) > 1 else 0
         with open(reaper.CMD_FILE, "w") as f:
             f.write(f"swap\n{filepath}\n{track_idx}\n{start_time:.6f}\n")
         # Consume the start info so a later, unrelated file can't swap onto
@@ -67,14 +52,14 @@ def _insert_media_flow(filename, force=False):
     except Exception:
         pass  # no record info from this session — insert as a new item instead
 
-    # Fallback: insert as a new item (used before first recording or if Lua poll script not running)
+    # Fallback: insert as a new item on the Take Session track (used before the
+    # first recording of a session, or if take_session.lua is not running)
     try:
-        contents = filepath + "\n" + str(selected_track)
         with open(TEMP_FILE, "w") as f:
-            f.write(contents)
+            f.write(filepath + "\n")
         requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
         receiver.update_take_status(filename, "done")
-        print(f"Reaper: placed {filename} on timeline (track {selected_track})")
+        print(f"Reaper: placed {filename} on the Take Session track")
     except requests.RequestException as e:
         print(f"Reaper: request failed — could not place {filename} ({e})")
 
