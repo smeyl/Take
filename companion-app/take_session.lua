@@ -3,8 +3,6 @@
 --
 -- What it does, continuously:
 --   * polls /tmp/take_reaper_cmd for commands from the Python backend:
---       arm\n{track_idx}  — arm that track for Take (input → BlackHole,
---                           record-arm it, disarm all others)
 --       record\n{track_idx}
 --                         — arm the track, save cursor pos, start recording
 --       stop              — stop the transport
@@ -16,6 +14,9 @@
 --   * registers take_insert_media.lua as an action on startup and writes its
 --     command ID to /tmp/take_insert_cmd_id (read by engineer.py) — no manual
 --     action registration needed
+--
+-- Deliberately minimal: Take never changes track inputs or routing, and only
+-- touches arm state at record time. The engineer owns the Reaper setup.
 
 local CMD_FILE      = "/tmp/take_reaper_cmd"
 local START_FILE    = "/tmp/take_record_start"
@@ -46,43 +47,6 @@ local function register_insert_action()
     end
   end
   return false
-end
-
---------------------------------------------------------------------------------
--- Track arming
-
--- I_RECINPUT value for BlackHole: stereo pair (1024 + first channel) when two
--- consecutive BlackHole channels exist, otherwise mono channel index.
-local function find_blackhole_input()
-  local n = reaper.GetNumAudioInputs()
-  for i = 0, n - 1 do
-    local name = reaper.GetInputChannelName(i) or ""
-    if name:find("BlackHole") then
-      local nxt = (i + 1 < n) and (reaper.GetInputChannelName(i + 1) or "") or ""
-      if nxt:find("BlackHole") then
-        return 1024 + i
-      end
-      return i
-    end
-  end
-  return nil
-end
-
-local function handle_arm(track_idx)
-  local target = reaper.GetTrack(0, track_idx)
-  if not target then return end
-  for i = 0, reaper.CountTracks(0) - 1 do
-    local tr = reaper.GetTrack(0, i)
-    reaper.SetMediaTrackInfo_Value(tr, "I_RECARM", tr == target and 1 or 0)
-  end
-  local input = find_blackhole_input()
-  if input then
-    reaper.SetMediaTrackInfo_Value(target, "I_RECINPUT", input)
-  end
-  -- Monitoring off: the Take backend already plays the live stream to the
-  -- engineer's output; monitoring here would double it.
-  reaper.SetMediaTrackInfo_Value(target, "I_RECMON", 0)
-  reaper.UpdateArrange()
 end
 
 --------------------------------------------------------------------------------
@@ -130,7 +94,12 @@ end
 -- Transport commands
 
 local function handle_record(track_idx)
-  handle_arm(track_idx)
+  -- Arm only the target track, only now — inputs and other tracks are
+  -- the engineer's business.
+  local track = reaper.GetTrack(0, track_idx)
+  if track then
+    reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+  end
   -- Save cursor position + track index so Python can request the swap later
   local pos = reaper.GetCursorPosition()
   local f = io.open(START_FILE, "w")
@@ -182,9 +151,7 @@ local function poll_commands()
   f:close()
   os.remove(CMD_FILE)
 
-  if cmd == "arm" then
-    handle_arm(tonumber(line2) or 0)
-  elseif cmd == "record" then
+  if cmd == "record" then
     handle_record(tonumber(line2) or 0)
   elseif cmd == "stop" then
     handle_stop()

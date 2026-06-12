@@ -76,8 +76,8 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const handleTrackSelect = async (index) => {
     setDestTrack(index);
     try {
-      // Relay stores the selection and tells Reaper to arm the track
-      // (input → BlackHole, all other tracks disarmed).
+      // Relay remembers the selection — Reaper is only touched when
+      // recording starts (the record command arms this track).
       await fetch(`${RELAY}/track/select/${index}`, { method: "POST" });
     } catch {}
   };
@@ -259,11 +259,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     return () => clearInterval(id);
   }, []);
 
-  // Track list for the bounce checkboxes — take_session.lua keeps the export
-  // current, so poll instead of fetching once.
+  // Track list for the destination dropdown and bounce checkboxes —
+  // take_session.lua keeps the export current, so poll instead of fetching once.
   useEffect(() => {
     const pollTracks = () => {
-      fetch(`${FILE_RECEIVER}/tracks`)
+      fetch(`${RELAY}/tracks`)
         .then(r => r.ok ? r.json() : [])
         .then(data => { if (data.length) setDestTracks(data); })
         .catch(() => {});

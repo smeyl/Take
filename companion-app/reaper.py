@@ -92,12 +92,6 @@ def create_track():
     return status == 200
 
 
-def arm_track(index):
-    """take_session.lua arms the track, sets its input to BlackHole, disarms others."""
-    _write_cmd(["arm", index])
-    return True
-
-
 def start_recording(track=0):
     # take_session.lua arms the track and starts the transport
     _write_cmd(["record", track])
@@ -118,9 +112,6 @@ if __name__ == "__main__":
     print(f"Connecting to Reaper at {BASE}\n")
 
     create_track()
-    time.sleep(0.5)
-
-    arm_track(0)
     time.sleep(0.5)
 
     start_recording(0)

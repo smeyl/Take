@@ -37,11 +37,6 @@ def _get_selected_track():
     except (OSError, ValueError):
         return 0
 
-@app.route("/tracks", methods=["GET"])
-def get_tracks_route():
-    return jsonify(reaper.get_tracks())
-
-
 def _is_auto_sync_enabled():
     try:
         r = requests.get(f"{RELAY_URL}/auto-sync", timeout=2)

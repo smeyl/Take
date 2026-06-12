@@ -256,7 +256,8 @@ def artist_proxy(endpoint):
 
 @app.route("/track/select/<int:index>", methods=["POST"])
 def select_track(index):
-    """Engineer picked a destination track — arm it in Reaper right away."""
+    """Remember the destination track. Reaper isn't touched until record time —
+    the record command arms this track as it starts rolling."""
     global selected_track
     selected_track = index
     try:
@@ -265,7 +266,6 @@ def select_track(index):
             fh.write(str(index))
     except OSError:
         pass
-    reaper.arm_track(index)
     log(f"Destination track → {index}")
     return jsonify({"ok": True, "selected_track": index})
 
@@ -346,6 +346,16 @@ def set_auto_sync():
     auto_sync = bool(data.get("enabled", True))
     log(f"Auto-sync {'enabled' if auto_sync else 'disabled'}")
     return jsonify({"enabled": auto_sync})
+
+
+@app.route("/tracks", methods=["GET"])
+def get_tracks():
+    """Track list for the engineer UI — proxied to the file receiver."""
+    try:
+        r = _requests.get("http://127.0.0.1:5001/tracks", timeout=2)
+        return r.text, r.status_code, {"Content-Type": r.headers.get("Content-Type", "application/json")}
+    except _requests.RequestException:
+        return jsonify([])
 
 
 @app.route("/markers", methods=["GET"])

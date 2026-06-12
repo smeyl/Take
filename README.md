@@ -82,4 +82,4 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
    - keeps track and marker exports current — no manual script runs needed
    - self-registers the insert action — no command-ID copying needed
 
-After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app — Take arms it and sets its input to BlackHole automatically.
+After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app. Take is minimally invasive in Reaper: it never changes track inputs or routing, and only arms the selected track at the moment recording starts. Set the destination track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.

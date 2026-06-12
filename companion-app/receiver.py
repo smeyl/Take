@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import threading
@@ -8,6 +9,7 @@ from flask_cors import CORS
 INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
 PORT = 5001
 SYNC_FORMAT_FILE = "/tmp/take_sync_format"
+TRACKS_FILE = "/tmp/take_tracks.json"
 
 on_file_received = None  # optional callback(filename, size) set by the host app
 sync_format = "WAV24"    # "WAV24" | "WAV32f" | "FLAC"
@@ -58,6 +60,16 @@ def upload():
 def get_takes():
     with _takes_lock:
         return jsonify(list(_received_takes))
+
+
+@app.route("/tracks", methods=["GET"])
+def get_tracks():
+    """Reaper track list, kept current by take_session.lua."""
+    try:
+        with open(TRACKS_FILE) as fh:
+            return jsonify(json.load(fh))
+    except (OSError, ValueError):
+        return jsonify([])
 
 
 @app.route("/sync-format", methods=["POST"])
