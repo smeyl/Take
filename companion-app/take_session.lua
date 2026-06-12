@@ -112,6 +112,18 @@ end
 
 local function handle_stop()
   reaper.Main_OnCommand(1016, 0)  -- Transport: Stop
+  -- Disarm the track we armed at record time — leave Reaper as we found it.
+  -- Read (don't delete) START_FILE: the upcoming file swap still needs it.
+  local f = io.open(START_FILE, "r")
+  if f then
+    f:read("*l")  -- skip position line
+    local idx = tonumber(f:read("*l") or "") or 0
+    f:close()
+    local track = reaper.GetTrack(0, idx)
+    if track then
+      reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 0)
+    end
+  end
 end
 
 local function handle_rtz()

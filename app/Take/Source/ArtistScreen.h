@@ -25,7 +25,9 @@ namespace TakeUI
             return juce::String::charToString ((juce::juce_wchar) ('A' + rng.nextInt (26)))
                    + juce::String (rng.nextInt (10));
         };
-        return pair() + " - " + pair() + " - " + pair();
+        // Middle dot (U+00B7) — matches the engineer app's XX · XX · XX format
+        auto sep = " " + juce::String::fromUTF8 ("\xC2\xB7") + " ";
+        return pair() + sep + pair() + sep + pair();
     }
 
     // Read the relay host from the session file written by start_artist.py.
@@ -1197,8 +1199,7 @@ public:
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
     void setLevel       (float l, float r)          { levelMeter.setLevel (l, r); }
 
-    void setEngineerIP (const juce::String& ip, const juce::String& code,
-                        const juce::String& password = {})
+    void setEngineerIP (const juce::String& ip, const juce::String& code)
     {
         companionConnected = ip.isNotEmpty();
         engineerConnected  = ip.isNotEmpty();
@@ -1218,16 +1219,10 @@ public:
             if (!meterPoller.isThreadRunning())
                 meterPoller.startThread();
 
-            // Session file read by start_artist.py — includes the password so
-            // the Python backend can make its own authenticated join.
-            auto* obj = new juce::DynamicObject();
-            obj->setProperty ("engineer_ip", ip);
-            obj->setProperty ("code", code);
-            if (password.isNotEmpty())
-                obj->setProperty ("password", password);
-            obj->setProperty ("written_at", juce::Time::currentTimeMillis());
+            // Session file read by start_artist.py — relay host + code bootstrap
             juce::File ("/tmp/take_session.json")
-                .replaceWithText (juce::JSON::toString (juce::var (obj), true));
+                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code
+                                  + "\",\"written_at\":" + juce::String (juce::Time::currentTimeMillis()) + "}");
         }
 
         repaint();

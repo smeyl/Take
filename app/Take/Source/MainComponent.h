@@ -53,8 +53,7 @@ class RoleSelectScreen : public juce::Component,
                          public juce::TextEditor::Listener
 {
 public:
-    // (engineerIP, rawCode, password)
-    std::function<void(const juce::String&, const juce::String&, const juce::String&)> onJoin;
+    std::function<void(const juce::String&, const juce::String&)> onJoin;  // (engineerIP, rawCode)
 
     RoleSelectScreen()
     {
@@ -66,7 +65,7 @@ public:
         subtitleLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (subtitleLabel);
 
-        sessionCodeEditor.setTextToShowWhenEmpty ("A7 - F2 - K9",
+        sessionCodeEditor.setTextToShowWhenEmpty (juce::String::fromUTF8 ("A7 \xC2\xB7 F2 \xC2\xB7 K9"),
                                                   juce::Colour (0xFF3A3A45));
         sessionCodeEditor.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
         sessionCodeEditor.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
@@ -89,10 +88,6 @@ public:
             ed.setFont (juce::Font (juce::FontOptions (12.0f)));
             ed.setJustification (juce::Justification::centred);
         };
-
-        setupSmallEditor (passwordEditor, "Password (optional)");
-        passwordEditor.setPasswordCharacter (0x2022);  // bullet
-        addAndMakeVisible (passwordEditor);
 
         setupSmallEditor (relayHostEditor, "Engineer IP (auto)");
         // Pre-fill from the session file written by start_artist.py, if present
@@ -142,10 +137,9 @@ public:
 
         subtitleLabel.setBounds (0,  228, w,   22);
         sessionCodeEditor.setBounds (cx, 266, 240, 46);
-        passwordEditor.setBounds    (cx, 320, 240, 34);
-        relayHostEditor.setBounds   (cx, 362, 240, 34);
-        joinButton.setBounds        (cx, 412, 240, 46);
-        errorLabel.setBounds        (0,  466, w,   22);
+        relayHostEditor.setBounds   (cx, 320, 240, 34);
+        joinButton.setBounds        (cx, 370, 240, 46);
+        errorLabel.setBounds        (0,  424, w,   22);
     }
 
     // juce::TextEditor::Listener
@@ -154,7 +148,8 @@ public:
         if (isFormattingCode) return;
         isFormattingCode = true;
 
-        const juce::String sep = " - ";
+        // Middle dot (U+00B7) — matches the engineer app's XX · XX · XX format
+        const juce::String sep = " " + juce::String::fromUTF8 ("\xC2\xB7") + " ";
 
         juce::String raw;
         for (auto c : editor.getText().toUpperCase())
@@ -211,9 +206,8 @@ private:
 
         // Capture value types, the onJoin callback, and a SafePointer for error
         // feedback. onJoin is owned by MainComponent which outlives the request.
-        juce::String code     = raw;
-        juce::String ip       = localIP;
-        juce::String password = passwordEditor.getText().trim();
+        juce::String code = raw;
+        juce::String ip   = localIP;
         auto cb = onJoin;
         juce::Component::SafePointer<RoleSelectScreen> safeThis (this);
 
@@ -223,18 +217,9 @@ private:
         if (relayHost.isEmpty())
             relayHost = TakeUI::readRelayHost();
 
-        // Build the body with the JSON writer so passwords survive quoting
-        juce::String body;
-        {
-            auto* obj = new juce::DynamicObject();
-            obj->setProperty ("code", code);
-            obj->setProperty ("ip", ip);
-            if (password.isNotEmpty())
-                obj->setProperty ("password", password);
-            body = juce::JSON::toString (juce::var (obj), true);
-        }
+        juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
 
-        std::thread ([code, password, relayHost, body, cb, safeThis]() mutable
+        std::thread ([code, relayHost, body, cb, safeThis]() mutable
         {
             juce::String engineerIP;
             int statusCode = 0;
@@ -242,18 +227,17 @@ private:
                                          body, engineerIP, statusCode);
 
             juce::MessageManager::callAsync ([cb, safeThis, ok, statusCode,
-                                              engineerIP, code, password]() mutable
+                                              engineerIP, code]() mutable
             {
                 if (ok)
                 {
-                    if (cb) cb (engineerIP, code, password);
+                    if (cb) cb (engineerIP, code);
                     return;
                 }
                 if (safeThis == nullptr) return;
                 safeThis->joinButton.setEnabled (true);
                 safeThis->errorLabel.setText (
-                    statusCode == 403 ? "Wrong password"
-                  : statusCode == 404 ? "Session not found"
+                    statusCode == 404 ? "Session not found"
                                       : "Could not reach the engineer",
                     juce::dontSendNotification);
                 safeThis->errorLabel.setVisible (true);
@@ -338,7 +322,6 @@ private:
     TakeLookAndFeel  laf;
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
-    juce::TextEditor passwordEditor;
     juce::TextEditor relayHostEditor;
     juce::TextButton joinButton;
     juce::Label      errorLabel;
@@ -362,7 +345,6 @@ private:
     Screen      currentScreen { Screen::ROLE_SELECT };
     juce::String engineerIP;
     juce::String rawCode;
-    juce::String sessionPassword;
     std::unique_ptr<juce::Component> screenComponent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

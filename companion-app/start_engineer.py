@@ -80,7 +80,13 @@ def _find_blackhole_device(audio):
 
 def run_stream_receiver():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", STREAM_PORT))
+    try:
+        sock.bind(("0.0.0.0", STREAM_PORT))
+    except OSError:
+        print(f"FATAL: stream receiver could not bind UDP {STREAM_PORT} — another "
+              f"process owns it (lsof -i :{STREAM_PORT}). No live artist audio.",
+              flush=True)
+        return
     sock.settimeout(1.0)
     audio = pyaudio.PyAudio()
 
@@ -135,11 +141,7 @@ if __name__ == "__main__":
         ])
 
         local_ip = get_local_ip()
-        session_body = {"ip": local_ip}
-        session_password = os.environ.get("TAKE_SESSION_PASSWORD", "").strip()
-        if session_password:
-            session_body["password"] = session_password
-        resp = requests.post(f"{RELAY_URL}/session/new", json=session_body)
+        resp = requests.post(f"{RELAY_URL}/session/new", json={"ip": local_ip})
         resp.raise_for_status()
         code = resp.json()["code"]
 

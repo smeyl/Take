@@ -1,4 +1,3 @@
-import hashlib
 import random
 import socket as _socket
 import string
@@ -30,10 +29,6 @@ CUE_PORT = 5003
 
 def generate_code():
     return "".join(random.choices(CHARS, k=6))
-
-
-def _hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def get_local_ip():
@@ -68,17 +63,14 @@ def new_session():
     # The relay runs on the engineer's machine, so its own LAN IP is the
     # correct fallback when the caller is local or sends a loopback address.
     engineer_ip = _resolve_ip(data.get("ip") or request.remote_addr, get_local_ip())
-    password = (data.get("password") or "").strip()
     code = generate_code()
     sessions[code] = {
         "engineer_ip": engineer_ip,
         "artist_ip": None,
         "created_at": time.time(),
         "heartbeats": {"engineer": None, "artist": None},
-        "password_hash": _hash_password(password) if password else None,
     }
-    log(f"New session {code} — engineer {engineer_ip}"
-        + (" (password protected)" if password else ""))
+    log(f"New session {code} — engineer {engineer_ip}")
     return jsonify({"code": code})
 
 
@@ -104,10 +96,6 @@ def join_session():
     artist_ip = _resolve_ip(data.get("ip"), request.remote_addr)
     if code not in sessions:
         return jsonify({"error": "session not found"}), 404
-    pw_hash = sessions[code].get("password_hash")
-    if pw_hash and _hash_password((data.get("password") or "").strip()) != pw_hash:
-        log(f"Join rejected for session {code} — wrong password ({artist_ip})")
-        return jsonify({"error": "wrong password"}), 403
     sessions[code]["artist_ip"] = artist_ip
     engineer_ip = sessions[code]["engineer_ip"]
     log(f"Artist {artist_ip} joined session {code} — engineer is {engineer_ip}")
@@ -329,8 +317,14 @@ def manual_take_swap(filename):
     """Forward a manual swap request to the file receiver on this machine."""
     try:
         r = _requests.post(f"http://127.0.0.1:5001/takes/{filename}/swap", timeout=5)
+        if r.status_code == 404:
+            # A receiver answered but doesn't have the swap route — that's the
+            # artist's receiver holding 5001, not the engineer's (start order).
+            log(f"Manual swap {filename}: receiver on 5001 has no swap route — "
+                f"engineer backend not running or lost port 5001")
         return r.text, r.status_code, {"Content-Type": r.headers.get("Content-Type", "application/json")}
     except _requests.RequestException as e:
+        log(f"Manual swap {filename}: file receiver unreachable ({e})")
         return jsonify({"error": f"file receiver unreachable: {e}"}), 502
 
 

@@ -6,7 +6,6 @@ const RELAY = "http://localhost:5010";
 export default function SessionScreen({ onStart }) {
   const [rawCode, setRawCode] = useState(null);  // null=polling, ""=error, "XXXXXX"=found
   const [creating, setCreating] = useState(false);
-  const [password, setPassword] = useState("");
   const pollRef = useRef(null);
 
   const stopPolling = () => {
@@ -45,7 +44,7 @@ export default function SessionScreen({ onStart }) {
       const r = await fetch(`${RELAY}/session/new`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(password.trim() ? { password: password.trim() } : {}),
+        body: JSON.stringify({}),
       });
       setRawCode(r.ok ? (await r.json()).code : "");
     } catch {
@@ -84,18 +83,6 @@ export default function SessionScreen({ onStart }) {
           }}>
             {displayCode}
           </div>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            placeholder="Password (optional)"
-            style={{
-              width: "100%", boxSizing: "border-box", marginBottom: 10,
-              background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4,
-              color: C.body, fontSize: 11, fontFamily: "inherit",
-              padding: "6px 8px", outline: "none", textAlign: "center",
-            }}
-          />
           <span
             style={{
               fontSize: 10, color: creating ? C.muted : C.blue,

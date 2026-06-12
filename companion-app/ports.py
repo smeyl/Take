@@ -9,9 +9,10 @@ import sys
 
 
 def _is_free(port, proto):
+    # No SO_REUSEADDR: the check must be exactly as strict as the real bind,
+    # otherwise it can claim a port is free that the service then fails to take.
     kind = socket.SOCK_STREAM if proto == "tcp" else socket.SOCK_DGRAM
     with socket.socket(socket.AF_INET, kind) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("0.0.0.0", port))
             return True

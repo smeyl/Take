@@ -28,11 +28,9 @@ void MainComponent::showScreen (Screen screen)
     if (screen == Screen::ROLE_SELECT)
     {
         auto* s = new RoleSelectScreen();
-        s->onJoin = [this] (const juce::String& ip, const juce::String& code,
-                            const juce::String& password) {
-            engineerIP      = ip;
-            rawCode         = code;
-            sessionPassword = password;
+        s->onJoin = [this] (const juce::String& ip, const juce::String& code) {
+            engineerIP = ip;
+            rawCode    = code;
             showScreen (Screen::ARTIST);
         };
         screenComponent.reset (s);
@@ -40,7 +38,15 @@ void MainComponent::showScreen (Screen screen)
     else if (screen == Screen::ARTIST)
     {
         auto* s = new ArtistScreen();
-        s->setEngineerIP (engineerIP, rawCode, sessionPassword);
+        s->setEngineerIP (engineerIP, rawCode);
+        if (rawCode.length() == 6)
+        {
+            // XX · XX · XX — same format as the engineer app
+            auto sep = " " + juce::String::fromUTF8 ("\xC2\xB7") + " ";
+            s->setSessionCode (rawCode.substring (0, 2) + sep
+                             + rawCode.substring (2, 4) + sep
+                             + rawCode.substring (4, 6));
+        }
         s->onBack = [this] { showScreen (Screen::ROLE_SELECT); };
         screenComponent.reset (s);
     }

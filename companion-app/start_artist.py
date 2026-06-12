@@ -82,13 +82,12 @@ def _read_session_file():
                 os.unlink(SESSION_FILE)
                 ip = data.get("engineer_ip", "")
                 code = data.get("code", "")
-                password = data.get("password", "")
                 if ip and code:
-                    return ip, code, password
+                    return ip, code
             except Exception:
                 pass
         time.sleep(1)
-    return None, None, ""
+    return None, None
 
 
 def run_file_receiver():
@@ -112,11 +111,10 @@ if __name__ == "__main__":
     ])
 
     print("Waiting for session code from JUCE app...", flush=True)
-    TARGET_IP, code, session_password = _read_session_file()
+    TARGET_IP, code = _read_session_file()
 
     if TARGET_IP is None:
         code = input("Enter session code: ")
-        session_password = input("Session password (blank if none): ").strip()
 
     # The relay lives on the engineer's machine. Resolution order:
     # TAKE_RELAY_HOST env var → engineer IP from the session file → prompt.
@@ -131,15 +129,9 @@ if __name__ == "__main__":
     MAX_WAIT = 60
     start_time = time.time()
     while True:
-        join_body = {"code": code, "ip": local_ip}
-        if session_password:
-            join_body["password"] = session_password
         try:
-            resp = requests.post(f"{RELAY_URL}/session/join", json=join_body, timeout=5)
-            if resp.status_code == 403:
-                print("Wrong session password.")
-                session_password = input("Session password: ").strip()
-                continue
+            resp = requests.post(f"{RELAY_URL}/session/join",
+                                 json={"code": code, "ip": local_ip}, timeout=5)
             resp.raise_for_status()
             break
         except Exception as e:
@@ -154,12 +146,9 @@ if __name__ == "__main__":
     print(f"Engineer found — {TARGET_IP}")
 
     # Write relay host so the JUCE app reads it before making its own join call
-    session_data = {"engineer_ip": TARGET_IP, "code": code,
-                    "written_at": int(time.time() * 1000)}
-    if session_password:
-        session_data["password"] = session_password
     with open(SESSION_FILE, "w") as f:
-        json.dump(session_data, f)
+        json.dump({"engineer_ip": TARGET_IP, "code": code,
+                   "written_at": int(time.time() * 1000)}, f)
 
     watcher.TARGET_IP = TARGET_IP
     artist.TARGET_IP = TARGET_IP

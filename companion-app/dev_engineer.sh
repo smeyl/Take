@@ -1,9 +1,11 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Kill any leftover processes on our ports
+# Kill any leftover processes on our ports (incl. zombie relay/bounce from a crashed run)
 lsof -ti :5001 | xargs kill -9 2>/dev/null
 lsof -ti :5002 | xargs kill -9 2>/dev/null
+lsof -ti :5006 | xargs kill -9 2>/dev/null
+lsof -ti :5010 | xargs kill -9 2>/dev/null
 sleep 0.5
 
 cleanup() {

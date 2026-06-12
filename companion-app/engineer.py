@@ -47,10 +47,11 @@ def _is_auto_sync_enabled():
 
 def _insert_media_flow(filename, force=False):
     filepath = os.path.join(INCOMING_PATH, filename)
+    print(f"[sync] {filename}: placing in Reaper (force={force})")
 
     if not force and not _is_auto_sync_enabled():
         take_label = filename.split("_")[0] if "_" in filename else filename
-        print(f"Auto-sync disabled — skipping swap for {take_label}")
+        print(f"[sync] auto-sync disabled — skipping swap for {take_label}")
         return
 
     # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
@@ -60,28 +61,38 @@ def _insert_media_flow(filename, force=False):
             lines = f.read().strip().split("\n")
         start_time = float(lines[0])
         track_idx  = int(lines[1]) if len(lines) > 1 else 0
+        print(f"[sync] swap info: track {track_idx}, position {start_time:.3f}s "
+              f"(from {reaper.START_FILE})")
         with open(reaper.CMD_FILE, "w") as f:
             f.write(f"swap\n{filepath}\n{track_idx}\n{start_time:.6f}\n")
         # Consume the start info so a later, unrelated file can't swap onto
         # this take's position — it falls through to a plain insert instead.
         os.remove(reaper.START_FILE)
         receiver.update_take_status(filename, "done")
-        print(f"Reaper: swap queued — {filename} → track {track_idx} at {start_time:.3f}s")
+        print(f"[sync] swap queued for take_session.lua — {filename}")
         return
-    except Exception:
-        pass  # no record info from this session — insert as a new item instead
+    except FileNotFoundError:
+        print(f"[sync] no swap info ({reaper.START_FILE} missing — no recording "
+              f"this session, or already consumed) — falling back to insert")
+    except Exception as e:
+        print(f"[sync] swap failed ({e}) — falling back to insert")
 
     # Fallback: insert as a new item on the selected destination track (used
     # before the first recording of a session, or if take_session.lua is not running)
     try:
         track = _get_selected_track()
+        action = _insert_action_id()
+        print(f"[sync] insert via Reaper action {action} (track {track})")
         with open(TEMP_FILE, "w") as f:
             f.write(filepath + "\n" + str(track))
-        requests.get(f"{BASE}/_/{_insert_action_id()}", timeout=5)
+        r = requests.get(f"{BASE}/_/{action}", timeout=5)
+        if not r.ok:
+            print(f"[sync] Reaper web API returned HTTP {r.status_code} — "
+                  f"is the action ID stale? ({INSERT_ID_FILE})")
         receiver.update_take_status(filename, "done")
-        print(f"Reaper: placed {filename} on track {track}")
+        print(f"[sync] placed {filename} on track {track}")
     except requests.RequestException as e:
-        print(f"Reaper: request failed — could not place {filename} ({e})")
+        print(f"[sync] Reaper unreachable — could not place {filename} ({e})")
 
 
 @app.route("/takes/<path:filename>/swap", methods=["POST"])
@@ -105,7 +116,14 @@ receiver.on_file_received = _on_file_received
 def run_receiver():
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
     os.makedirs(INCOMING_PATH, exist_ok=True)
-    app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+    try:
+        app.run(host="0.0.0.0", port=PORT, use_reloader=False)
+    except OSError:
+        # Without this receiver, takes can't arrive and swaps can't run.
+        # Don't let that fail silently in a background thread.
+        print(f"FATAL: file receiver could not bind port {PORT} — another "
+              f"process owns it (lsof -i :{PORT}). Takes will NOT sync.",
+              flush=True)
 
 
 if __name__ == "__main__":
