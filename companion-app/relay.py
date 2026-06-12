@@ -22,6 +22,7 @@ sessions = {}  # code -> {engineer_ip, artist_ip, created_at, heartbeats}
 timecode_state = {"pos": 0.0, "playing": False}
 punch_state    = {"in": 0.0, "out": 0.0, "active": False}
 auto_sync      = True
+selected_track = 0  # destination track index, set from the engineer UI
 
 CHARS = string.ascii_uppercase + string.digits
 CUE_PORT = 5003
@@ -253,11 +254,27 @@ def artist_proxy(endpoint):
 # transport calls these when recording starts/stops so the live BlackHole
 # recording in Reaper follows the artist's lossless local recording.
 
+@app.route("/track/select/<int:index>", methods=["POST"])
+def select_track(index):
+    """Engineer picked a destination track — arm it in Reaper right away."""
+    global selected_track
+    selected_track = index
+    try:
+        # engineer.py reads this for the fallback insert path
+        with open("/tmp/take_dest_track", "w") as fh:
+            fh.write(str(index))
+    except OSError:
+        pass
+    reaper.arm_track(index)
+    log(f"Destination track → {index}")
+    return jsonify({"ok": True, "selected_track": index})
+
+
 @app.route("/reaper/record", methods=["POST"])
 def reaper_record():
-    # take_session.lua arms and records onto the Take Session track
-    reaper.start_recording()
-    return jsonify({"ok": True})
+    # take_session.lua arms the selected track and starts the transport
+    reaper.start_recording(selected_track)
+    return jsonify({"ok": True, "track": selected_track})
 
 
 @app.route("/reaper/stop", methods=["POST"])

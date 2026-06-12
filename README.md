@@ -77,9 +77,9 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
 ## Reaper setup
 
 1. Enable the web interface: **Preferences → Control/OSC/web → Add → Web browser interface** (port 8080)
-2. Run `companion-app/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`), so every Reaper launch automatically:
-   - creates a record-armed **Take Session** track with its input set to BlackHole (incoming takes always land there)
+2. Run `companion-app/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`). Every Reaper launch then automatically:
+   - listens for Take's transport commands (record/stop/RTZ/swap)
    - keeps track and marker exports current — no manual script runs needed
-3. One-time: register `take_insert_media.lua` as an action (**Actions → Show action list → New action → Load ReaScript**) and put its command ID in `companion-app/engineer.py` (`ACTION_INSERT_MEDIA`). This is the fallback used to place a file when no swap position is known.
+   - self-registers the insert action — no command-ID copying needed
 
-After that, a session is: open Reaper, double-click Take Engineer.app.
+After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app — Take arms it and sets its input to BlackHole automatically.

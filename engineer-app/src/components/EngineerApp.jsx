@@ -24,6 +24,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [bouncing, setBouncing]     = useState(false);
   const [levels, setLevels]         = useState({ l: -60, r: -60 });
   const [destTracks, setDestTracks] = useState([]);
+  const [destTrack, setDestTrack]   = useState(0);
   const [punchActive, setPunchActive] = useState(false);
   // Set of track indices selected for the next bounce; initialised from destTracks.
   const [bounceTracks, setBounceTracks] = useState(new Set());
@@ -69,6 +70,15 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tracks: [...updated] }),
       });
+    } catch {}
+  };
+
+  const handleTrackSelect = async (index) => {
+    setDestTrack(index);
+    try {
+      // Relay stores the selection and tells Reaper to arm the track
+      // (input → BlackHole, all other tracks disarmed).
+      await fetch(`${RELAY}/track/select/${index}`, { method: "POST" });
     } catch {}
   };
 
@@ -379,14 +389,23 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               </div>
             </div>
             <div>
-              <div className="sec-label">Destination</div>
-              <div style={{
-                background: C.raised, border: `1px solid ${C.border}`, borderRadius: 4,
-                padding: "4px 6px", fontSize: 9,
-                color: dots.reaper ? C.body : C.muted,
-              }}>
-                {dots.reaper ? "Take Session track (auto)" : "Reaper not connected"}
-              </div>
+              <div className="sec-label">Destination track</div>
+              <select
+                value={destTrack}
+                onChange={e => handleTrackSelect(Number(e.target.value))}
+                style={{
+                  width: "100%", background: C.raised, border: `1px solid ${C.border}`,
+                  color: destTracks.length ? C.body : C.muted, borderRadius: 4,
+                  padding: "4px 6px", fontSize: 9, fontFamily: "inherit", cursor: "pointer",
+                }}
+              >
+                {destTracks.length === 0
+                  ? <option value={0}>No tracks — Reaper not connected</option>
+                  : destTracks.map(t => (
+                      <option key={t.index} value={t.index}>{t.name || `Track ${t.index + 1}`}</option>
+                    ))
+                }
+              </select>
             </div>
             <div>
               <div className="sec-label">Transport</div>

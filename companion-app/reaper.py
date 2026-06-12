@@ -92,18 +92,16 @@ def create_track():
     return status == 200
 
 
-def arm_track():
-    return _get(f"/_/{ACTION_ARM_TRACK}") == 200
-
-
-def start_recording():
-    # take_session.lua arms the Take Session track and starts the transport
-    _write_cmd(["record"])
+def arm_track(index):
+    """take_session.lua arms the track, sets its input to BlackHole, disarms others."""
+    _write_cmd(["arm", index])
     return True
 
 
-def unarm_track():
-    return _get(f"/_/{ACTION_ARM_TRACK}") == 200
+def start_recording(track=0):
+    # take_session.lua arms the track and starts the transport
+    _write_cmd(["record", track])
+    return True
 
 
 def stop_recording():
@@ -122,12 +120,11 @@ if __name__ == "__main__":
     create_track()
     time.sleep(0.5)
 
-    arm_track()
+    arm_track(0)
     time.sleep(0.5)
 
-    start_recording()
+    start_recording(0)
     print("Recording for 3 seconds...")
     time.sleep(3)
 
     stop_recording()
-    unarm_track()

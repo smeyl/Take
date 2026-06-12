@@ -12,7 +12,7 @@ import engineer  # wires up receiver.on_file_received as a side effect
 import ports
 import stream_sender
 import timecode
-from engineer import run_receiver, INCOMING_PATH, PORT, ACTION_INSERT_MEDIA
+from engineer import run_receiver, INCOMING_PATH, PORT
 from reaper import BASE
 
 RELAY_URL = "http://127.0.0.1:5010"
@@ -194,7 +194,7 @@ if __name__ == "__main__":
         print(f"  File receiver  : 0.0.0.0:{PORT} → {INCOMING_PATH}/")
         print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
         print(f"  Reaper         : {BASE} ({'reachable' if reaper_ok else 'NOT REACHABLE'})")
-        print(f"  Script         : {ACTION_INSERT_MEDIA}")
+        print(f"  Insert action  : {engineer._insert_action_id()}")
         print(f"  Timecode       : UDP → {artist_ip}:{timecode.PORT}")
         print("Press Ctrl+C to stop.\n")
 

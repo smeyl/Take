@@ -1,40 +1,55 @@
 -- Take: all-in-one session script — auto-started by Reaper via __startup.lua
--- (installed by setup.sh; replaces take_reaper_poll.lua + take_export_tracks.lua
---  + take_export_markers.lua, which required manual runs every session)
+-- (installed by setup.sh)
 --
 -- What it does, continuously:
 --   * polls /tmp/take_reaper_cmd for commands from the Python backend:
---       record            — arm the Take Session track, save cursor pos, record
+--       arm\n{track_idx}  — arm that track for Take (input → BlackHole,
+--                           record-arm it, disarm all others)
+--       record\n{track_idx}
+--                         — arm the track, save cursor pos, start recording
 --       stop              — stop the transport
 --       rtz               — return to zero (project start)
 --       swap\n{filepath}\n{track_idx}\n{start_time}
 --                         — replace the streamed item with the lossless file
 --   * exports the track list to /tmp/take_tracks.json whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
---   * guarantees a "Take Session" track exists, with its input set to
---     BlackHole and record-armed — created automatically if missing
+--   * registers take_insert_media.lua as an action on startup and writes its
+--     command ID to /tmp/take_insert_cmd_id (read by engineer.py) — no manual
+--     action registration needed
 
-local CMD_FILE     = "/tmp/take_reaper_cmd"
-local START_FILE   = "/tmp/take_record_start"
-local TRACKS_FILE  = "/tmp/take_tracks.json"
-local MARKERS_FILE = "/tmp/take_markers.json"
-local TRACK_NAME   = "Take Session"
+local CMD_FILE      = "/tmp/take_reaper_cmd"
+local START_FILE    = "/tmp/take_record_start"
+local TRACKS_FILE   = "/tmp/take_tracks.json"
+local MARKERS_FILE  = "/tmp/take_markers.json"
+local INSERT_ID_FILE = "/tmp/take_insert_cmd_id"
 
 local last_tracks_json  = nil
 local last_markers_json = nil
 local tick = 0
 
 --------------------------------------------------------------------------------
--- Take Session track
+-- Insert action self-registration
 
-local function find_session_track()
-  for i = 0, reaper.CountTracks(0) - 1 do
-    local tr = reaper.GetTrack(0, i)
-    local _, name = reaper.GetTrackName(tr, "", 256)
-    if name == TRACK_NAME then return tr, i end
+local function register_insert_action()
+  local script = reaper.GetResourcePath() .. "/Scripts/take_insert_media.lua"
+  -- Idempotent: re-adding an already-registered script returns its existing ID
+  local cmd_id = reaper.AddRemoveReaScript(true, 0, script, true)
+  if cmd_id and cmd_id ~= 0 then
+    local named = reaper.ReverseNamedCommandLookup(cmd_id)
+    if named then
+      local f = io.open(INSERT_ID_FILE, "w")
+      if f then
+        f:write("_" .. named)  -- web API form: /_/_RS<hash>
+        f:close()
+        return true
+      end
+    end
   end
-  return nil, -1
+  return false
 end
+
+--------------------------------------------------------------------------------
+-- Track arming
 
 -- I_RECINPUT value for BlackHole: stereo pair (1024 + first channel) when two
 -- consecutive BlackHole channels exist, otherwise mono channel index.
@@ -53,27 +68,21 @@ local function find_blackhole_input()
   return nil
 end
 
-local function ensure_session_track()
-  local tr, idx = find_session_track()
-  if tr then return tr, idx end
-
-  reaper.Undo_BeginBlock()
-  idx = reaper.CountTracks(0)
-  reaper.InsertTrackAtIndex(idx, true)
-  tr = reaper.GetTrack(0, idx)
-  reaper.GetSetMediaTrackInfo_String(tr, "P_NAME", TRACK_NAME, true)
-
+local function handle_arm(track_idx)
+  local target = reaper.GetTrack(0, track_idx)
+  if not target then return end
+  for i = 0, reaper.CountTracks(0) - 1 do
+    local tr = reaper.GetTrack(0, i)
+    reaper.SetMediaTrackInfo_Value(tr, "I_RECARM", tr == target and 1 or 0)
+  end
   local input = find_blackhole_input()
   if input then
-    reaper.SetMediaTrackInfo_Value(tr, "I_RECINPUT", input)
+    reaper.SetMediaTrackInfo_Value(target, "I_RECINPUT", input)
   end
-  reaper.SetMediaTrackInfo_Value(tr, "I_RECARM", 1)
   -- Monitoring off: the Take backend already plays the live stream to the
   -- engineer's output; monitoring here would double it.
-  reaper.SetMediaTrackInfo_Value(tr, "I_RECMON", 0)
-  reaper.Undo_EndBlock("Take: create session track", -1)
+  reaper.SetMediaTrackInfo_Value(target, "I_RECMON", 0)
   reaper.UpdateArrange()
-  return tr, idx
 end
 
 --------------------------------------------------------------------------------
@@ -118,16 +127,15 @@ local function export_if_changed()
 end
 
 --------------------------------------------------------------------------------
--- Command handlers
+-- Transport commands
 
-local function handle_record()
-  local tr, idx = ensure_session_track()
-  reaper.SetMediaTrackInfo_Value(tr, "I_RECARM", 1)
-  -- Save cursor position + actual track index so Python can request the swap
+local function handle_record(track_idx)
+  handle_arm(track_idx)
+  -- Save cursor position + track index so Python can request the swap later
   local pos = reaper.GetCursorPosition()
   local f = io.open(START_FILE, "w")
   if f then
-    f:write(string.format("%.6f\n%d\n", pos, idx))
+    f:write(string.format("%.6f\n%d\n", pos, track_idx))
     f:close()
   end
   reaper.Main_OnCommand(1013, 0)  -- Transport: Record
@@ -143,12 +151,7 @@ local function handle_rtz()
 end
 
 local function handle_swap(filepath, track_idx, start_time)
-  -- Prefer the Take Session track by name; the stored index is only a
-  -- fallback in case the track was renamed between record and swap.
-  local track = find_session_track()
-  if not track then
-    track = reaper.GetTrack(0, track_idx)
-  end
+  local track = reaper.GetTrack(0, track_idx)
   if not track then return end
   -- Find the BlackHole-recorded item near start_time and remove it
   for i = reaper.GetTrackNumMediaItems(track) - 1, 0, -1 do
@@ -179,8 +182,10 @@ local function poll_commands()
   f:close()
   os.remove(CMD_FILE)
 
-  if cmd == "record" then
-    handle_record()  -- always targets the Take Session track
+  if cmd == "arm" then
+    handle_arm(tonumber(line2) or 0)
+  elseif cmd == "record" then
+    handle_record(tonumber(line2) or 0)
   elseif cmd == "stop" then
     handle_stop()
   elseif cmd == "rtz" then
@@ -195,14 +200,14 @@ local function main()
   poll_commands()
   tick = tick + 1
   if tick % 30 == 0 then  -- roughly once per second
-    ensure_session_track()
     export_if_changed()
   end
   reaper.defer(main)
 end
 
-ensure_session_track()
+local registered = register_insert_action()
 export_if_changed()
-reaper.ShowConsoleMsg("Take: session script running — '" .. TRACK_NAME
-                      .. "' track ready, listening on " .. CMD_FILE .. "\n")
+reaper.ShowConsoleMsg("Take: session script running — listening on " .. CMD_FILE
+                      .. (registered and ", insert action registered\n"
+                                      or  ", WARNING: insert action not registered\n"))
 main()

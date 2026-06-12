@@ -9,9 +9,33 @@ import reaper
 from receiver import app, INCOMING_PATH, PORT
 from reaper import BASE
 
-ACTION_INSERT_MEDIA = "_RSb5c2380eebd5068bc425e17e9f920644a2f49be8"
 TEMP_FILE = "/tmp/take_incoming.txt"
 RELAY_URL = "http://127.0.0.1:5010"
+INSERT_ID_FILE = "/tmp/take_insert_cmd_id"
+DEST_TRACK_FILE = "/tmp/take_dest_track"
+
+# Fallback for setups predating auto-registration (take_session.lua writes the
+# real ID to INSERT_ID_FILE on every Reaper launch).
+_INSERT_ACTION_FALLBACK = "_RSb5c2380eebd5068bc425e17e9f920644a2f49be8"
+
+
+def _insert_action_id():
+    try:
+        with open(INSERT_ID_FILE) as fh:
+            action = fh.read().strip()
+            if action:
+                return action
+    except OSError:
+        pass
+    return _INSERT_ACTION_FALLBACK
+
+
+def _get_selected_track():
+    try:
+        with open(DEST_TRACK_FILE) as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return 0
 
 @app.route("/tracks", methods=["GET"])
 def get_tracks_route():
@@ -52,14 +76,15 @@ def _insert_media_flow(filename, force=False):
     except Exception:
         pass  # no record info from this session — insert as a new item instead
 
-    # Fallback: insert as a new item on the Take Session track (used before the
-    # first recording of a session, or if take_session.lua is not running)
+    # Fallback: insert as a new item on the selected destination track (used
+    # before the first recording of a session, or if take_session.lua is not running)
     try:
+        track = _get_selected_track()
         with open(TEMP_FILE, "w") as f:
-            f.write(filepath + "\n")
-        requests.get(f"{BASE}/_/{ACTION_INSERT_MEDIA}", timeout=5)
+            f.write(filepath + "\n" + str(track))
+        requests.get(f"{BASE}/_/{_insert_action_id()}", timeout=5)
         receiver.update_take_status(filename, "done")
-        print(f"Reaper: placed {filename} on the Take Session track")
+        print(f"Reaper: placed {filename} on track {track}")
     except requests.RequestException as e:
         print(f"Reaper: request failed — could not place {filename} ({e})")
 
@@ -93,7 +118,7 @@ if __name__ == "__main__":
 
     print("Take — engineer ready")
     print(f"  File receiver : 0.0.0.0:{PORT} → {INCOMING_PATH}/")
-    print(f"  Reaper        : {ACTION_INSERT_MEDIA}")
+    print(f"  Insert action : {_insert_action_id()}")
 
     try:
         while True:

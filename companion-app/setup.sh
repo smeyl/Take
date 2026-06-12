@@ -22,8 +22,6 @@ rm -f "$SCRIPTS/take_reaper_poll.lua" \
       "$SCRIPTS/take_export_tracks.lua" \
       "$SCRIPTS/take_export_markers.lua"
 
-echo "Setup complete."
-echo "Reaper will create and arm a 'Take Session' track automatically on launch."
-echo "One manual step remains: register take_insert_media.lua as an action"
-echo "(Actions → Show action list → New action → Load ReaScript) and put its"
-echo "command ID in companion-app/engineer.py (ACTION_INSERT_MEDIA)."
+echo "Setup complete — zero Reaper configuration needed."
+echo "On every Reaper launch the Take script starts automatically, keeps track"
+echo "and marker exports current, and self-registers the insert action."
