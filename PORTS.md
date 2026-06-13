@@ -19,7 +19,7 @@ two-machine session; in single-machine dev everything shares localhost.
 ## Conflict detection
 
 `start_engineer.py`, `start_artist.py`, and `relay.py` check their ports at
-startup via `companion-app/ports.py` and exit with a clear message if one is
+startup via `backend/ports.py` and exit with a clear message if one is
 taken (`lsof -i :PORT` finds the offender). The engineer (5001) and artist
 (5009) file receivers use separate ports specifically so single-machine dev
 never produces a silent collision.

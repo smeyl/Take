@@ -6,7 +6,8 @@ import soundfile as sf
 import sounddevice as sd
 import timecode as tc
 
-INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
+# Data lives at the repo root (sibling of this backend/ folder), not inside it.
+INCOMING_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "incoming")
 BACKING_PATH  = os.path.join(INCOMING_PATH, "take_backing_track.mp3")
 
 stop_event = threading.Event()

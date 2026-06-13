@@ -14,7 +14,8 @@ import cue_receiver
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-RECORDINGS_PATH = os.path.join(os.path.dirname(__file__), "recordings")
+# Data lives at the repo root (sibling of this backend/ folder), not inside it.
+RECORDINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
 PORT = 5004
 RATE = 44100
 CHANNELS = 1

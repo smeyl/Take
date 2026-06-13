@@ -6,7 +6,8 @@ from watchdog.events import FileSystemEventHandler
 from sender import send_file
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".aiff", ".aif", ".flac", ".ogg", ".m4a"}
-WATCH_PATH = os.path.join(os.path.dirname(__file__), "recordings")
+# Data lives at the repo root (sibling of this backend/ folder), not inside it.
+WATCH_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
 TARGET_IP = "127.0.0.1"
 
 

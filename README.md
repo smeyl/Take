@@ -2,6 +2,25 @@
 
 Remote recording session tool for engineers and artists. The engineer controls transport and cue mix from a web app; the artist sees session state and meters in a native macOS app.
 
+## Project layout
+
+```
+Take/
+├── artist-app/    Native macOS app the artist runs (JUCE / C++, Xcode project)
+├── engineer-app/  Web UI the engineer runs (Electron + React + Vite)
+├── backend/       Python services for BOTH sides (transport, relay, file transfer, Reaper)
+├── recordings/    Artist's local lossless takes (written by backend, git-ignored)
+├── incoming/      Files the engineer receives from the artist (git-ignored)
+├── docs/          Product spec and design docs
+├── PORTS.md       Full port map for the running services
+└── README.md
+```
+
+A session uses all three apps together: the artist runs `artist-app` + the
+artist half of `backend`; the engineer runs `engineer-app` + the engineer half
+of `backend`. The two halves of `backend` share modules (file transfer, Reaper
+control, timecode), which is why they live in one Python folder.
+
 ## Requirements
 
 - macOS with Python 3.9 at `/usr/bin/python3` (standard on older Macs), or install Python 3.11 and adjust the scripts
@@ -18,10 +37,10 @@ git clone <repo-url>
 cd Take
 ```
 
-### 2. Companion app (Python backend)
+### 2. Backend (Python services)
 
 ```bash
-cd companion-app
+cd backend
 ./setup.sh
 ```
 
@@ -40,7 +59,7 @@ npm install
 
 ```bash
 # Terminal 1 — Python services
-cd companion-app
+cd backend
 ./dev_engineer.sh
 
 # Terminal 2 — React dev server
@@ -53,14 +72,14 @@ npm run start
 ### Artist (native macOS app + Python backend)
 
 ```bash
-cd companion-app
+cd backend
 ./dev_artist.sh
 ```
 
 Or to launch the compiled app bundle alongside the backend:
 
 ```bash
-cd companion-app
+cd backend
 ./start_take_artist.sh
 ```
 
@@ -77,7 +96,7 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
 ## Reaper setup
 
 1. Enable the web interface: **Preferences → Control/OSC/web → Add → Web browser interface** (port 8080)
-2. Run `companion-app/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`). Every Reaper launch then automatically:
+2. Run `backend/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`). Every Reaper launch then automatically:
    - listens for Take's transport commands (record/stop/RTZ/swap)
    - keeps track and marker exports current — no manual script runs needed
    - self-registers the insert action — no command-ID copying needed

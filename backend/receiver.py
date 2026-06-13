@@ -6,7 +6,8 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-INCOMING_PATH = os.path.join(os.path.dirname(__file__), "incoming")
+# Data lives at the repo root (sibling of this backend/ folder), not inside it.
+INCOMING_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "incoming")
 PORT = 5001         # engineer's receiver: takes uploaded by the artist
 ARTIST_PORT = 5009  # artist's receiver: backing track bounced by the engineer
 SYNC_FORMAT_FILE = "/tmp/take_sync_format"

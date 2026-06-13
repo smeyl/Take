@@ -1,5 +1,5 @@
 #!/bin/bash
-osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/companion-app && ./dev_engineer.sh"'
+osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/backend && ./dev_engineer.sh"'
 
 sleep 3
 osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/engineer-app && npm run start"'

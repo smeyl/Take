@@ -1,4 +1,4 @@
 #!/bin/bash
-osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/companion-app && ./dev_artist.sh"'
+osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/backend && ./dev_artist.sh"'
 sleep 2
-open ~/Desktop/Take/app/Take/Builds/MacOSX/build/Debug/Take.app
+open ~/Desktop/Take/artist-app/Take/Builds/MacOSX/build/Debug/Take.app

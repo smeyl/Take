@@ -1231,7 +1231,7 @@ public:
     void timerCallback() override
     {
         auto f = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                             .getChildFile ("Desktop/Take/companion-app/incoming/take_backing_track.mp3");
+                             .getChildFile ("Desktop/Take/incoming/take_backing_track.mp3");
         const bool found = f.existsAsFile();
         if (found != trackWindow.backingLoaded)
         {
