@@ -1,4 +1,15 @@
 #!/bin/bash
-osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/backend && ./dev_artist.sh"'
-sleep 2
-open ~/Desktop/Take/artist-app/Take/Builds/MacOSX/build/Debug/Take.app
+# Launch the artist backend + native JUCE app with no visible Terminal windows.
+# The backend runs detached and logs to ~/Desktop/Take/logs/.
+TAKE_DIR="$HOME/Desktop/Take"
+LOGS="$TAKE_DIR/logs"
+mkdir -p "$LOGS"
+
+# Python services (transport, stream, receivers)
+cd "$TAKE_DIR/backend" && nohup ./dev_artist.sh >> "$LOGS/artist.log" 2>&1 &
+disown
+
+# Native JUCE app — `open` returns immediately and puts it in the Dock
+open "$TAKE_DIR/artist-app/Take/Builds/MacOSX/build/Debug/Take.app"
+
+exit 0

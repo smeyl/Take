@@ -1,5 +1,19 @@
 #!/bin/bash
-osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/backend && ./dev_engineer.sh"'
+# Launch the engineer backend + Electron UI with no visible Terminal windows.
+# Everything runs detached and logs to ~/Desktop/Take/logs/.
+TAKE_DIR="$HOME/Desktop/Take"
+LOGS="$TAKE_DIR/logs"
+mkdir -p "$LOGS"
 
-sleep 3
-osascript -e 'tell app "Terminal" to do script "cd ~/Desktop/Take/engineer-app && npm run start"'
+# Finder launches bundles with a minimal PATH; make sure node/npm are findable.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+# Python services (relay + engineer backend)
+cd "$TAKE_DIR/backend" && nohup ./dev_engineer.sh >> "$LOGS/engineer.log" 2>&1 &
+disown
+
+# Electron UI (also runs the Vite dev server) — appears in the Dock on its own
+cd "$TAKE_DIR/engineer-app" && nohup npm start >> "$LOGS/electron.log" 2>&1 &
+disown
+
+exit 0

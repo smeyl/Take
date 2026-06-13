@@ -7,4 +7,7 @@ __pycache__/
 /incoming/*
 !/recordings/.gitkeep
 !/incoming/.gitkeep
+
+# Runtime logs — keep the tail script, ignore the log files
+/logs/*.log
 node_modules/
