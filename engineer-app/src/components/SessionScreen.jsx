@@ -15,16 +15,43 @@ export default function SessionScreen({ onStart }) {
     }
   };
 
+  // Register a new session with the relay and return its code (null on failure).
+  // The relay maps a loopback ip to its own LAN IP, so sending 127.0.0.1 is
+  // safe and keeps two-machine sessions working.
+  const requestNewCode = async () => {
+    try {
+      const r = await fetch(`${RELAY}/session/new`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip: "127.0.0.1" }),
+      });
+      return r.ok ? (await r.json()).code : null;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     const poll = async () => {
       try {
         const r = await fetch(`${RELAY}/session/active`);
         if (r.ok) {
-          const data = await r.json();
-          setRawCode(data.code);
+          // A session is already registered with the relay — reuse its code.
+          setRawCode((await r.json()).code);
           stopPolling();
+          return;
         }
-        // 404 = no active session yet — keep polling silently
+        if (r.status === 404) {
+          // Relay is up but has no active session — register one now.
+          stopPolling();
+          setCreating(true);
+          try {
+            setRawCode((await requestNewCode()) ?? "");
+          } finally {
+            setCreating(false);
+          }
+        }
+        // any other status — keep polling silently
       } catch {
         // relay not up yet — keep polling silently
       }
@@ -39,16 +66,7 @@ export default function SessionScreen({ onStart }) {
     stopPolling();
     setCreating(true);
     try {
-      // No ip in the body — the relay substitutes its own LAN IP, which is
-      // correct because the relay always runs on the engineer's machine.
-      const r = await fetch(`${RELAY}/session/new`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      setRawCode(r.ok ? (await r.json()).code : "");
-    } catch {
-      setRawCode("");
+      setRawCode((await requestNewCode()) ?? "");
     } finally {
       setCreating(false);
     }
