@@ -7,3 +7,4 @@ __pycache__/
 /incoming/*
 !/recordings/.gitkeep
 !/incoming/.gitkeep
+node_modules/
