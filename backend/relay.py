@@ -56,6 +56,12 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    # Lightweight readiness probe — launchers poll this before starting the UI.
+    return jsonify({"status": "ok"})
+
+
 @app.route("/session/new", methods=["POST"])
 def new_session():
     prune_expired()
