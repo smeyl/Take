@@ -1,31 +1,10 @@
 #!/bin/bash
-# Launch the engineer backend + Electron UI with no visible Terminal windows.
-# Everything runs detached and logs to ~/Desktop/Take/logs/.
-TAKE_DIR="$HOME/Desktop/Take"
-BACKEND="$TAKE_DIR/backend"
-LOGS="$TAKE_DIR/logs"
-mkdir -p "$LOGS"
-
-# Finder launches bundles with a minimal PATH; make sure node/npm are findable.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-# Python services (relay + engineer backend). Invoke with an explicit /bin/bash
-# and absolute path so Gatekeeper's "Operation not permitted" on ./script.sh
-# (and any cwd quirks) can't block the launch.
-nohup /bin/bash "$BACKEND/dev_engineer.sh" >> "$LOGS/engineer.log" 2>&1 &
-disown
-
-# Wait for relay to be ready (max 15 seconds) so the UI doesn't open before
-# the backend and show "Waiting for dev_engineer.sh to start..."
-for i in $(seq 1 15); do
-    if curl -s http://localhost:5010/health > /dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-
-# Electron UI (also runs the Vite dev server) — appears in the Dock on its own
-cd "$TAKE_DIR/engineer-app" && nohup npm start >> "$LOGS/electron.log" 2>&1 &
-disown
+# One Terminal window: backend runs in the background (&), then the Electron
+# UI runs in the foreground. Everything visible in a single tab.
+osascript <<'EOF'
+tell application "Terminal"
+    do script "cd ~/Desktop/Take/backend && ./dev_engineer.sh & sleep 5 && cd ~/Desktop/Take/engineer-app && npm start"
+end tell
+EOF
 
 exit 0
