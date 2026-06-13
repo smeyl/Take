@@ -2,14 +2,17 @@
 # Launch the engineer backend + Electron UI with no visible Terminal windows.
 # Everything runs detached and logs to ~/Desktop/Take/logs/.
 TAKE_DIR="$HOME/Desktop/Take"
+BACKEND="$TAKE_DIR/backend"
 LOGS="$TAKE_DIR/logs"
 mkdir -p "$LOGS"
 
 # Finder launches bundles with a minimal PATH; make sure node/npm are findable.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-# Python services (relay + engineer backend)
-cd "$TAKE_DIR/backend" && nohup ./dev_engineer.sh >> "$LOGS/engineer.log" 2>&1 &
+# Python services (relay + engineer backend). Invoke with an explicit /bin/bash
+# and absolute path so Gatekeeper's "Operation not permitted" on ./script.sh
+# (and any cwd quirks) can't block the launch.
+nohup /bin/bash "$BACKEND/dev_engineer.sh" >> "$LOGS/engineer.log" 2>&1 &
 disown
 
 # Wait for relay to be ready (max 15 seconds) so the UI doesn't open before
