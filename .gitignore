@@ -11,3 +11,8 @@ __pycache__/
 # Runtime logs — keep the tail script, ignore the log files
 /logs/*.log
 node_modules/
+
+# Generated icon artifacts — keep make_icons.py, ignore its output
+assets/*.png
+assets/*.icns
+assets/*.iconset
