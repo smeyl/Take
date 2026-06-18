@@ -63,34 +63,32 @@ npm install
 
 ## Running
 
-### One-click launch (recommended)
+### If you are the engineer
 
-Double-click **Take Engineer.app** — this opens a terminal window running
-the Python backend and the Electron engineer app together.
+1. Open Reaper and set your destination track's input to BlackHole 2ch
+2. Double-click **Take Engineer.app**
+3. A session code appears — share it with the artist
+4. Select the destination track from the dropdown in the app
+5. Hit **Rec** when ready
 
-Double-click **Take Artist.app** — this opens a terminal window running
-the Python backend and the JUCE artist app together.
+### If you are the artist
 
-Start the engineer app first and wait for the session code to appear,
-then start the artist app.
+1. Double-click **Take Artist.app**
+2. Enter the session code the engineer shared with you
+3. Put on headphones — you will hear yourself through the cue mix
+4. Perform when the engineer starts recording
 
-### Manual launch (for development)
+### For development (manual launch)
 
 **Engineer:**
 ```bash
-# Terminal 1 — Python services
-cd backend
-./dev_engineer.sh
-
-# Terminal 2 — React dev server
-cd engineer-app
-npm run start
+cd backend && ./dev_engineer.sh
+cd engineer-app && npm run start
 ```
 
 **Artist:**
 ```bash
-cd backend
-./dev_artist.sh
+cd backend && ./dev_artist.sh
 ```
 
 ### Two machines
