@@ -63,8 +63,20 @@ npm install
 
 ## Running
 
-### Engineer (web app + Python backend)
+### One-click launch (recommended)
 
+Double-click **Take Engineer.app** — this opens a terminal window running
+the Python backend and the Electron engineer app together.
+
+Double-click **Take Artist.app** — this opens a terminal window running
+the Python backend and the JUCE artist app together.
+
+Start the engineer app first and wait for the session code to appear,
+then start the artist app.
+
+### Manual launch (for development)
+
+**Engineer:**
 ```bash
 # Terminal 1 — Python services
 cd backend
@@ -75,20 +87,10 @@ cd engineer-app
 npm run start
 ```
 
-`npm run start` launches the Vite dev server and the Electron shell together. (To use a browser instead, open `http://localhost:5173`.)
-
-### Artist (native macOS app + Python backend)
-
+**Artist:**
 ```bash
 cd backend
 ./dev_artist.sh
-```
-
-Or to launch the compiled app bundle alongside the backend:
-
-```bash
-cd backend
-./start_take_artist.sh
 ```
 
 ### Two machines
