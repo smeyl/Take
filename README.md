@@ -1,6 +1,14 @@
 # Take
 
-Remote recording session tool for engineers and artists. The engineer controls transport and cue mix from a web app; the artist sees session state and meters in a native macOS app.
+Take is a remote recording session tool that lets an engineer and an artist work together from different locations. The engineer controls transport and cue mix from a web app, while the artist monitors session state and meters in a native macOS app. Recording is captured losslessly on the artist's machine and the takes are transferred back to the engineer, with Reaper driving the actual capture.
+
+## Screenshots
+
+> _Screenshots coming soon._
+>
+> <!-- Add images here, e.g.:
+> ![Engineer web app](docs/screenshots/engineer.png)
+> ![Artist macOS app](docs/screenshots/artist.png) -->
 
 ## Project layout
 
@@ -102,3 +110,14 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
    - self-registers the insert action — no command-ID copying needed
 
 After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app. Take is minimally invasive in Reaper: it never changes track inputs or routing, and only arms the selected track at the moment recording starts. Set the destination track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.
+
+## Built with
+
+- **[JUCE](https://juce.com/)** — native macOS artist app (C++)
+- **[Electron](https://www.electronjs.org/)** — engineer desktop web app (with React + Vite)
+- **[Python](https://www.python.org/)** — backend services for transport, relay, file transfer, and timecode
+- **[Reaper](https://www.reaper.fm/)** — DAW driving the lossless recording via its web interface
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Arda Akıncı.
