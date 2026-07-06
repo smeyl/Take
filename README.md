@@ -38,28 +38,31 @@ control, timecode), which is why they live in one Python folder.
 
 ## Setup
 
-### 1. Clone the repo
+### 1. Clone the repo (both machines)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/smeyl/Take
 cd Take
 ```
 
-### 2. Backend (Python services)
+### 2. If you are the engineer
 
 ```bash
 cd backend
-./setup.sh
+./setup.sh          # installs Python dependencies
+
+cd ../engineer-app
+npm install          # installs the web app dependencies
 ```
 
-This installs all dependencies directly to `/usr/bin/python3`.
-
-### 3. Engineer web app
+### 3. If you are the artist
 
 ```bash
-cd engineer-app
-npm install
+cd backend
+./setup.sh          # installs Python dependencies
 ```
+
+That's it — the artist app (Take Artist.app) is already built and ready to run. No Node.js or Xcode needed on the artist's machine.
 
 ## Running
 
