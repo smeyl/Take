@@ -36,6 +36,7 @@ control, timecode), which is why they live in one Python folder.
 - Python 3.9–3.12 at `/usr/bin/python3` or installed separately (**Python 3.13+ is not supported** — `pedalboard` requires ≤ 3.12)
 - Node.js 18+ (engineer only)
 - Reaper with web interface enabled (engineer only)
+- On Apple Silicon Macs: Rosetta 2 (the prebuilt artist app is Intel-only — macOS offers to install Rosetta on first launch, or run `softwareupdate --install-rosetta`)
 
 `setup.sh` handles installing portaudio (via Homebrew) and all Python dependencies automatically. If Homebrew itself is missing, it will tell you and stop — install Homebrew first, then re-run `./setup.sh`.
 
@@ -115,6 +116,8 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
    - keeps track and marker exports current — no manual script runs needed
    - self-registers the insert action — no command-ID copying needed
 
+3. One-time, if you want **Bounce & send**: run **File → Render** once, set the output to `/tmp/take_backing_track.mp3` (MP3, stereo), render, and save the project. The bounce button reuses those render settings.
+
 After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app. Take is minimally invasive in Reaper: it never changes track inputs or routing, and only arms the selected track at the moment recording starts. Set the destination track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.
 
 ## Built with
@@ -122,7 +125,7 @@ After that, a session is: open Reaper, double-click Take Engineer.app, and pick 
 - **[JUCE](https://juce.com/)** — native macOS artist app (C++)
 - **[Electron](https://www.electronjs.org/)** — engineer desktop web app (with React + Vite)
 - **[Python](https://www.python.org/)** — backend services for transport, relay, file transfer, and timecode
-- **[Reaper](https://www.reaper.fm/)** — DAW driving the lossless recording via its web interface
+- **[Reaper](https://www.reaper.fm/)** — DAW on the engineer's side, driven by file-based Lua IPC (transport, take swap, timeline)
 
 ## License
 
