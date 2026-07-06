@@ -33,6 +33,8 @@ control, timecode), which is why they live in one Python folder.
 
 - macOS with Python 3.9 at `/usr/bin/python3` (standard on older Macs), or install Python 3.11 and adjust the scripts
 - **Python 3.13+ is not supported** — `pedalboard` requires Python ≤ 3.12
+- [Homebrew](https://brew.sh) — used to install portaudio
+- portaudio — required to build `pyaudio`; `setup.sh` installs it automatically via Homebrew (so Homebrew must be present first)
 - Node.js 18+
 - Reaper (with web interface enabled)
 
