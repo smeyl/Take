@@ -1,3 +1,4 @@
+import os
 import time
 import requests
 
@@ -19,9 +20,13 @@ CMD_FILE   = "/tmp/take_reaper_cmd"
 START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
 
 def _write_cmd(lines):
+    # Write-then-rename so take_session.lua (polling ~30x/s) can never read a
+    # half-written command file. rename() is atomic on the same filesystem.
+    tmp = CMD_FILE + ".tmp"
     try:
-        with open(CMD_FILE, "w") as f:
+        with open(tmp, "w") as f:
             f.write("\n".join(str(l) for l in lines) + "\n")
+        os.replace(tmp, CMD_FILE)
     except OSError as e:
         print(f"  ERROR: could not write Reaper command: {e}")
 

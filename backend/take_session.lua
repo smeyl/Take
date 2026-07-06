@@ -154,14 +154,19 @@ end
 -- Main loop
 
 local function poll_commands()
-  local f = io.open(CMD_FILE, "r")
+  -- Claim the file by renaming it first: Python writes atomically (tmp file +
+  -- rename), so a visible CMD_FILE is always complete, and claiming it means
+  -- a new command arriving between our read and delete can't be lost.
+  local claimed = CMD_FILE .. ".claimed"
+  if not os.rename(CMD_FILE, claimed) then return end
+  local f = io.open(claimed, "r")
   if not f then return end
   local cmd   = f:read("*l") or ""
   local line2 = f:read("*l") or ""
   local line3 = f:read("*l") or ""
   local line4 = f:read("*l") or ""
   f:close()
-  os.remove(CMD_FILE)
+  os.remove(claimed)
 
   if cmd == "record" then
     handle_record(tonumber(line2) or 0)

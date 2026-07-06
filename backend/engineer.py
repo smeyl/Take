@@ -1,6 +1,7 @@
 import os
 import logging
 import threading
+import time
 import requests
 from flask import jsonify
 
@@ -57,14 +58,22 @@ def _insert_media_flow(filename, force=False):
     # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
     # Requires take_session.lua running in Reaper and a prior recording in this session.
     try:
+        # Swap info left over from a crashed/killed session must not place a
+        # new take at an old position — treat anything older than an hour as gone.
+        age = time.time() - os.path.getmtime(reaper.START_FILE)
+        if age > 3600:
+            os.remove(reaper.START_FILE)
+            print(f"[sync] discarding stale swap info ({age:.0f}s old) — "
+                  f"falling back to insert")
+            raise FileNotFoundError(reaper.START_FILE)
         with open(reaper.START_FILE) as f:
             lines = f.read().strip().split("\n")
         start_time = float(lines[0])
         track_idx  = int(lines[1]) if len(lines) > 1 else 0
         print(f"[sync] swap info: track {track_idx}, position {start_time:.3f}s "
               f"(from {reaper.START_FILE})")
-        with open(reaper.CMD_FILE, "w") as f:
-            f.write(f"swap\n{filepath}\n{track_idx}\n{start_time:.6f}\n")
+        # Atomic write via reaper._write_cmd — never a partial read in Lua
+        reaper._write_cmd(["swap", filepath, track_idx, f"{start_time:.6f}"])
         # Consume the start info so a later, unrelated file can't swap onto
         # this take's position — it falls through to a plain insert instead.
         os.remove(reaper.START_FILE)
