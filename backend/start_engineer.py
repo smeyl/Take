@@ -141,8 +141,23 @@ if __name__ == "__main__":
         ])
 
         local_ip = get_local_ip()
-        resp = requests.post(f"{RELAY_URL}/session/new", json={"ip": local_ip})
-        resp.raise_for_status()
+
+        # The relay is launched moments before us (dev_engineer.sh) and can
+        # take a few seconds to bind on a first run with cold imports — retry
+        # instead of crashing on the first refused connection.
+        deadline = time.time() + 30
+        while True:
+            try:
+                resp = requests.post(f"{RELAY_URL}/session/new",
+                                     json={"ip": local_ip}, timeout=3)
+                resp.raise_for_status()
+                break
+            except requests.RequestException:
+                if time.time() > deadline:
+                    print("Could not reach the relay on 127.0.0.1:5010 after 30s "
+                          "— is relay.py running?", file=sys.stderr)
+                    sys.exit(1)
+                time.sleep(1)
         code = resp.json()["code"]
 
         display_code = f"{code[0:2]} · {code[2:4]} · {code[4:6]}"

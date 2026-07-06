@@ -1,9 +1,14 @@
 #!/bin/bash
 # One Terminal window: backend runs in the background (&), then the native
 # JUCE app is opened. Everything visible in a single tab.
-osascript <<'EOF'
+#
+# The repo root is derived from this bundle's location (the .app lives at the
+# repo root), so the clone can be anywhere — not just ~/Desktop/Take.
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+
+osascript <<EOF
 tell application "Terminal"
-    do script "cd ~/Desktop/Take/backend && ./dev_artist.sh & sleep 3 && open ~/Desktop/Take/artist-app/Take/Builds/MacOSX/build/Debug/Take.app"
+    do script "cd \"$ROOT/backend\" && ./dev_artist.sh & sleep 3 && open \"$ROOT/artist-app/Take/Builds/MacOSX/build/Debug/Take.app\""
 end tell
 EOF
 
