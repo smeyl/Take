@@ -47,6 +47,13 @@ _stream_queue = queue.Queue(maxsize=32)  # mic audio for run_stream_from_transpo
 _stop_writer = threading.Event()
 _writer_thread = None
 
+# The artist app shows a 3-2-1 countdown when /status flips to recording.
+# Actual capture (file write AND the Reaper transport start) is delayed by the
+# same duration so the countdown is pure preparation time — nothing recorded
+# during it, and the lossless file stays aligned with Reaper's timeline.
+COUNTDOWN_SECONDS = 3  # must match the artist app's countdown (3 ticks x 1s)
+_pending = None        # {"timer": threading.Timer, "cancelled": bool} during countdown
+
 
 def _reaper_start():
     try:
@@ -165,11 +172,43 @@ def _audio_thread():
 threading.Thread(target=_audio_thread, daemon=True).start()
 
 
+def _open_take_file(fmt, take, timestamp):
+    if fmt == "FLAC":
+        path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.flac")
+        return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS,
+                            format="FLAC", subtype="PCM_24")
+    if fmt == "WAV32f":
+        path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.wav")
+        return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="FLOAT")
+    # WAV24 (default)
+    path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.wav")
+    return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="PCM_24")
+
+
+def _begin_capture(token, fmt, take, timestamp):
+    """Countdown finished: open the file, start the writer, roll Reaper.
+    The file must not exist before this point — watcher.py sends any audio
+    file whose size stays stable, so an empty file idling through the
+    countdown would be shipped as an empty take."""
+    global _recording, _sf_file, _writer_thread, _stop_writer, _pending
+    with _lock:
+        if token["cancelled"]:   # /stop won the race — never start
+            return
+        _pending = None
+        _sf_file = _open_take_file(fmt, take, timestamp)
+        _stop_writer = threading.Event()
+        _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
+        _writer_thread.start()
+        _recording = True
+        threading.Thread(target=_reaper_start, daemon=True).start()
+        print(f"Recording started — T{take}", flush=True)
+
+
 @app.route("/record", methods=["POST"])
 def record():
-    global _recording, _take, _sf_file, _writer_thread, _stop_writer
+    global _take, _pending
     with _lock:
-        if _recording:
+        if _recording or _pending is not None:
             return jsonify({"error": "already recording"}), 409
         _take += 1
         os.makedirs(RECORDINGS_PATH, exist_ok=True)
@@ -178,29 +217,30 @@ def record():
         # the /tmp fallbacks only work when both roles share one machine.
         data = request.get_json(force=True, silent=True) or {}
         fmt = data.get("format") or _get_sync_format()
-        if fmt == "FLAC":
-            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.flac")
-            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS,
-                                    format="FLAC", subtype="PCM_24")
-        elif fmt == "WAV32f":
-            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.wav")
-            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="FLOAT")
-        else:  # WAV24 (default)
-            path = os.path.join(RECORDINGS_PATH, f"T{_take}_{timestamp}.wav")
-            _sf_file = sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="PCM_24")
-        _stop_writer = threading.Event()
-        _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
-        _writer_thread.start()
-        _recording = True
-        threading.Thread(target=_reaper_start, daemon=True).start()
-        print(f"Recording started — T{_take}", flush=True)
-        return jsonify({"recording": True, "take": _take})
+        # Report recording=true immediately so the artist app starts its
+        # countdown; actual capture begins when the countdown ends.
+        token = {"cancelled": False}
+        timer = threading.Timer(COUNTDOWN_SECONDS, _begin_capture,
+                                args=(token, fmt, _take, timestamp))
+        timer.daemon = True
+        _pending = {"timer": timer, "token": token}
+        timer.start()
+        print(f"Record armed — T{_take} starts in {COUNTDOWN_SECONDS}s", flush=True)
+        return jsonify({"recording": True, "take": _take,
+                        "countdown": COUNTDOWN_SECONDS})
 
 
 @app.route("/stop", methods=["POST"])
 def stop():
-    global _recording, _sf_file, _writer_thread
+    global _recording, _sf_file, _writer_thread, _pending
     with _lock:
+        if _pending is not None:
+            # Stopped during the countdown — nothing was captured yet
+            _pending["token"]["cancelled"] = True
+            _pending["timer"].cancel()
+            _pending = None
+            print(f"Recording cancelled during countdown — T{_take}", flush=True)
+            return jsonify({"recording": False, "take": _take})
         if not _recording:
             return jsonify({"error": "not recording"}), 409
         _recording = False       # audio thread stops feeding the queue
@@ -216,7 +256,10 @@ def stop():
 @app.route("/status", methods=["GET"])
 def status():
     with _lock:
-        return jsonify({"recording": _recording, "take": _take})
+        # Countdown counts as "recording" for every consumer: the artist app
+        # keys its 3-2-1 off this flag and the engineer UI shows the live take.
+        active = _recording or _pending is not None
+        return jsonify({"recording": active, "take": _take})
 
 
 @app.route("/levels", methods=["GET"])
