@@ -36,7 +36,6 @@ control, timecode), which is why they live in one Python folder.
 - Python 3.9–3.12 at `/usr/bin/python3` or installed separately (**Python 3.13+ is not supported** — `pedalboard` requires ≤ 3.12)
 - Node.js 18+ (engineer only)
 - Reaper with web interface enabled (engineer only)
-- On Apple Silicon Macs: Rosetta 2 (the prebuilt artist app is Intel-only — macOS offers to install Rosetta on first launch, or run `softwareupdate --install-rosetta`)
 
 `setup.sh` handles installing portaudio (via Homebrew) and all Python dependencies automatically. If Homebrew itself is missing, it will tell you and stop — install Homebrew first, then re-run `./setup.sh`.
 

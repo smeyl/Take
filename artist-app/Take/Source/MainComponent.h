@@ -50,7 +50,8 @@ public:
 
 //==============================================================================
 class RoleSelectScreen : public juce::Component,
-                         public juce::TextEditor::Listener
+                         public juce::TextEditor::Listener,
+                         private juce::Timer
 {
 public:
     std::function<void(const juce::String&, const juce::String&)> onJoin;  // (engineerIP, rawCode)
@@ -97,6 +98,10 @@ public:
                 relayHostEditor.setText (known, juce::dontSendNotification);
         }
         addAndMakeVisible (relayHostEditor);
+        // The session file usually doesn't exist yet when this screen first
+        // renders (start_artist.py discovers the engineer asynchronously) —
+        // keep checking until it appears. timerCallback stops once filled.
+        startTimer (1000);
 
         joinButton.setButtonText ("Join session");
         joinButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
@@ -115,7 +120,25 @@ public:
 
     ~RoleSelectScreen() override
     {
+        stopTimer();
         setLookAndFeel (nullptr);
+    }
+
+    // juce::Timer — auto-fill the engineer IP once start_artist.py has
+    // discovered it. Never overwrite something the user typed.
+    void timerCallback() override
+    {
+        if (relayHostEditor.getText().isNotEmpty())
+        {
+            stopTimer();
+            return;
+        }
+        auto known = TakeUI::readRelayHost();
+        if (known != "127.0.0.1")
+        {
+            relayHostEditor.setText (known, juce::dontSendNotification);
+            stopTimer();
+        }
     }
 
     void paint (juce::Graphics& g) override
