@@ -49,7 +49,15 @@ def process_audio(samples):
 
 def listen_for_cues():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", PORT))
+    try:
+        sock.bind(("0.0.0.0", PORT))
+    except OSError:
+        # Without this listener the engineer's knob changes never arrive —
+        # don't let that die silently on a background thread.
+        print(f"FATAL: cue receiver could not bind UDP {PORT} — another "
+              f"process owns it (lsof -i :{PORT}). Engineer cue changes "
+              f"will NOT reach the artist DSP.", flush=True)
+        return
     sock.settimeout(1.0)
 
     while not stop_event.is_set():

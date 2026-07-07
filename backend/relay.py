@@ -99,7 +99,13 @@ def join_session():
     prune_expired()
     data = request.get_json(force=True, silent=True) or {}
     code = data.get("code", "")
-    artist_ip = _resolve_ip(data.get("ip"), request.remote_addr)
+    # Prefer the address the relay actually sees the artist at: the reverse
+    # path is reachable by construction (UDP cue, transport proxy), whereas
+    # the artist's self-reported LAN IP can name the wrong interface across
+    # Tailscale or multi-NIC setups. Loopback means single-machine dev —
+    # fall back to the self-reported address there.
+    artist_ip = _resolve_ip(request.remote_addr, None) \
+        or _resolve_ip(data.get("ip"), "127.0.0.1")
     if code not in sessions:
         return jsonify({"error": "session not found"}), 404
     sessions[code]["artist_ip"] = artist_ip
@@ -176,14 +182,21 @@ def _latest_artist_ip():
     return max(joined, key=lambda s: s["created_at"])["artist_ip"]
 
 
+_last_cue_target = None
+
+
 @app.route("/cue/<param>/<value>", methods=["POST"])
 def cue_forward(param, value):
+    global _last_cue_target
     dsp_name = _CUE_PARAM_MAP.get(param)
     if dsp_name is None:
         return jsonify({"ok": True, "dropped": True})  # no DSP equivalent
     artist_ip = _latest_artist_ip()
     if not artist_ip:
         return jsonify({"error": "artist not connected"}), 404
+    if artist_ip != _last_cue_target:
+        log(f"Cue params → {artist_ip}:{CUE_PORT}")
+        _last_cue_target = artist_ip
     msg = f"{dsp_name}:{value}".encode()
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     try:
