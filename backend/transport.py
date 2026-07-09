@@ -11,6 +11,7 @@ import numpy as np
 import pyaudio
 import requests
 import soundfile as sf
+import backing_player
 import cue_receiver
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -270,7 +271,10 @@ def status():
         if _pending is not None:
             countdown = max(0, min(COUNTDOWN_SECONDS,
                                    math.ceil(_pending["deadline"] - time.monotonic())))
-        return jsonify({"recording": active, "take": _take, "countdown": countdown})
+        # backing_duration = real length of the loaded backing track (0 if none),
+        # so the artist app's waveform ruler shows the true track length.
+        return jsonify({"recording": active, "take": _take, "countdown": countdown,
+                        "backing_duration": round(backing_player.duration, 3)})
 
 
 @app.route("/levels", methods=["GET"])

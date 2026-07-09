@@ -12,6 +12,11 @@ BACKING_PATH  = os.path.join(INCOMING_PATH, "take_backing_track.mp3")
 
 stop_event = threading.Event()
 
+# Duration (seconds) of the currently loaded backing track, 0.0 when none is
+# loaded. Exposed via transport.py's /status so the artist app's ruler reflects
+# the real track length instead of a fixed guess.
+duration = 0.0
+
 SYNC_INTERVAL = 0.5   # seconds between drift checks
 DRIFT_LIMIT   = 2.0   # seconds before we seek
 
@@ -24,8 +29,10 @@ def _file_changed(loaded_mtime):
 
 
 def run_backing_player():
+    global duration
     while not stop_event.is_set():
         if not os.path.exists(BACKING_PATH):
+            duration = 0.0
             time.sleep(1)
             continue
 
@@ -41,7 +48,8 @@ def run_backing_player():
             data = data.reshape(-1, 1)
         total_samples = len(data)
         channels      = data.shape[1]
-        print("Backing track loaded — waiting for timecode")
+        duration      = total_samples / float(samplerate) if samplerate else 0.0
+        print(f"Backing track loaded ({duration:.1f}s) — waiting for timecode")
 
         _play_loop(data, samplerate, total_samples, channels, loaded_mtime)
 

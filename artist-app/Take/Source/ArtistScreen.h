@@ -44,6 +44,13 @@ namespace TakeUI
             return "127.0.0.1";
         return ip;
     }
+
+    // Format seconds as M:SS for the waveform ruler.
+    inline juce::String formatMinSec (float seconds)
+    {
+        int s = juce::jmax (0, juce::roundToInt (seconds));
+        return juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2);
+    }
 }
 
 //==============================================================================
@@ -358,8 +365,9 @@ class ArtistScreen : public juce::Component,
             g.fillRect (b);
 
             g.setFont (TakeUI::monoFont (9.0f));
-            const char* labels[] = { "0:00", "0:16", "0:32", "0:48", "1:04" };
-
+            // Tick labels derived from the real track duration (totalDuration is
+            // updated from the loaded backing track; falls back to the default
+            // before one arrives).
             for (int i = 0; i <= 4; ++i)
             {
                 float frac = i / 4.0f;
@@ -382,7 +390,7 @@ class ArtistScreen : public juce::Component,
                 }
 
                 g.setColour (juce::Colour (0xFF3A3A48));
-                g.drawText (labels[i], tx - 16, b.getY() + 5, 32,
+                g.drawText (TakeUI::formatMinSec (frac * totalDuration), tx - 16, b.getY() + 5, 32,
                             b.getHeight() - 5, juce::Justification::centred);
             }
 
@@ -581,6 +589,9 @@ class ArtistScreen : public juce::Component,
     class SectionNowCard : public juce::Component
     {
     public:
+        void setMarkers  (const std::vector<Marker>& m) { markers = m; repaint(); }
+        void setPlayhead (float seconds)                { playheadSec = seconds; repaint(); }
+
         void paint (juce::Graphics& g) override
         {
             auto b = getLocalBounds();
@@ -591,19 +602,50 @@ class ArtistScreen : public juce::Component,
             g.setColour (juce::Colour (0xFF222228));
             g.drawHorizontalLine (0, 0.0f, (float) getWidth());
 
+            // Current section = the nearest marker at or before the playhead;
+            // next = the nearest one after it. Real Reaper markers, no order
+            // assumption — no placeholders.
+            int curIdx = -1, nextIdx = -1;
+            for (int i = 0; i < (int) markers.size(); ++i)
+            {
+                const float p = markers[i].position;
+                if (p <= playheadSec + 0.01f)
+                {
+                    if (curIdx < 0 || p > markers[curIdx].position) curIdx = i;
+                }
+                else if (nextIdx < 0 || p < markers[nextIdx].position)
+                {
+                    nextIdx = i;
+                }
+            }
+
+            juce::String current = markers.empty() ? "No markers"
+                                 : curIdx >= 0     ? markers[curIdx].name
+                                                   : juce::String::fromUTF8 ("\xE2\x80\x94");  // em dash
+            juce::String nextText;
+            if (nextIdx >= 0)
+            {
+                int secs = juce::jmax (0, juce::roundToInt (markers[nextIdx].position - playheadSec));
+                nextText = "Next: " + markers[nextIdx].name + "  ~" + juce::String (secs) + "s";
+            }
+
             int leftW = b.getWidth() / 2;
             g.setFont (TakeUI::monoFont (14.0f, true));
             g.setColour (juce::Colour (0xFF4F8FFF));
-            g.drawText ("Chorus", b.getX() + 12, b.getY(), leftW - 12, b.getHeight(),
+            g.drawText (current, b.getX() + 12, b.getY(), leftW - 12, b.getHeight(),
                         juce::Justification::centredLeft);
 
             g.setFont (TakeUI::monoFont (10.0f));
             g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText ("Next: Verse 2  ~14s", b.getX() + leftW, b.getY(), leftW - 12, b.getHeight(),
+            g.drawText (nextText, b.getX() + leftW, b.getY(), leftW - 12, b.getHeight(),
                         juce::Justification::centredRight);
         }
 
         void resized() override {}
+
+    private:
+        std::vector<Marker> markers;
+        float               playheadSec { 0.0f };
     };
 
     //==========================================================================
@@ -759,7 +801,7 @@ class ArtistScreen : public juce::Component,
     class StatusPoller : public juce::Thread
     {
     public:
-        std::function<void(bool, bool, int, int)> onResult;  // (connected, recording, take, latencyMs)
+        std::function<void(bool, bool, int, int, float)> onResult;  // (connected, recording, take, latencyMs, backingDuration)
 
         StatusPoller() : juce::Thread ("TakeStatusPoller") {}
 
@@ -767,10 +809,11 @@ class ArtistScreen : public juce::Component,
         {
             while (!threadShouldExit())
             {
-                bool connected = false;
-                bool recording = false;
-                int  take      = 1;
-                int  latencyMs = 0;
+                bool  connected       = false;
+                bool  recording       = false;
+                int   take            = 1;
+                int   latencyMs       = 0;
+                float backingDuration = 0.0f;
 
                 juce::String body;
                 auto t0 = juce::Time::getMillisecondCounter();
@@ -781,17 +824,18 @@ class ArtistScreen : public juce::Component,
                     auto json = juce::JSON::parse (body);
                     if (json.isObject())
                     {
-                        recording = (bool) json["recording"];
-                        take      = (int)  json["take"];
+                        recording       = (bool)          json["recording"];
+                        take            = (int)           json["take"];
+                        backingDuration = (float)(double) json["backing_duration"];
                     }
                 }
 
                 // Copy callback by value so the lambda doesn't reference this thread object
                 auto cb = onResult;
                 if (cb)
-                    juce::MessageManager::callAsync ([cb, connected, recording, take, latencyMs]() mutable
+                    juce::MessageManager::callAsync ([cb, connected, recording, take, latencyMs, backingDuration]() mutable
                     {
-                        cb (connected, recording, take, latencyMs);
+                        cb (connected, recording, take, latencyMs, backingDuration);
                     });
 
                 wait (2000);
@@ -1221,12 +1265,14 @@ public:
             safeThis->repaint();
         };
 
-        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take, int latencyMs)
+        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take, int latencyMs, float backingDuration)
         {
             if (safeThis == nullptr) return;
             safeThis->serverConnected           = connected;
             safeThis->recordRing.takeNumber     = take;
             safeThis->latencyMs                 = latencyMs;
+            if (backingDuration > 0.0f)
+                safeThis->trackWindow.totalDuration = backingDuration;
 
             bool wasRecording = safeThis->lastBackendRecording;
             safeThis->lastBackendRecording = recording;
@@ -1255,9 +1301,11 @@ public:
         timecodePoller.onResult = [safeThis] (float pos, bool /*playing*/)
         {
             if (safeThis == nullptr) return;
-            constexpr float kTotalDuration = 64.0f;
-            safeThis->trackWindow.playheadPct = pos / kTotalDuration;
+            const float dur = safeThis->trackWindow.totalDuration;
+            safeThis->trackWindow.playheadPct = (dur > 0.0f) ? juce::jlimit (0.0f, 1.0f, pos / dur)
+                                                             : 0.0f;
             safeThis->trackWindow.repaint();
+            safeThis->sectionNow.setPlayhead (pos);   // drives the current/next section card
         };
         timecodePoller.startThread();
 
@@ -1271,6 +1319,7 @@ public:
         {
             if (safeThis == nullptr) return;
             safeThis->trackWindow.setMarkers (m);
+            safeThis->sectionNow.setMarkers (m);   // same markers feed the section card
         };
         markersPoller.startThread();
 
