@@ -29,6 +29,34 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   // Set of track indices selected for the next bounce; initialised from destTracks.
   const [bounceTracks, setBounceTracks] = useState(new Set());
   const [autoSync, setAutoSync]         = useState(true);
+  // Pre-roll countdown before capture actually starts (null = not counting).
+  // Sourced from transport.py so it mirrors the artist's 3-2-1 exactly.
+  const [countdown, setCountdown]       = useState(null);
+  const countdownRef                    = useRef(null);
+
+  const stopCountdown = () => {
+    if (countdownRef.current) { clearInterval(countdownRef.current); countdownRef.current = null; }
+    setCountdown(null);
+  };
+
+  // Smooth local ticker seeded by the backend's countdown value. Guarded so the
+  // click path and the status poll can both call it without double-starting.
+  const startCountdown = (seconds) => {
+    if (countdownRef.current || !seconds) return;
+    setCountdown(seconds);
+    countdownRef.current = setInterval(() => {
+      setCountdown((c) => {
+        if (c === null || c <= 1) {
+          clearInterval(countdownRef.current);
+          countdownRef.current = null;
+          return null;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => stopCountdown, []);  // clear the interval on unmount
 
   // Initialise bounce selection whenever the track list loads.
   useEffect(() => {
@@ -56,6 +84,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         const data = await r.json();
         setRecording(data.recording);
         if (data.take !== undefined) setTakeCount(data.take);
+        // Start the countdown the instant we arm (zero poll latency for the
+        // person who clicked); clear it when stopping or cancelling.
+        if (endpoint === "record" && data.countdown) startCountdown(data.countdown);
+        else if (endpoint === "stop") stopCountdown();
       }
     } catch {}
   };
@@ -187,6 +219,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
           const data = await r.json();
           setRecording(data.recording);
           setTakeCount(data.take);
+          // Backup path to the click handler: pick up an in-progress countdown
+          // (e.g. after a reload) and clear it once capture is truly done.
+          if (data.countdown > 0) startCountdown(data.countdown);
+          else if (!data.recording) stopCountdown();
         }
       } catch {}
     };
@@ -319,7 +355,9 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             <div key={label} className="eng-conn" style={{ WebkitAppRegion: "no-drag" }}><div className={`dot ${dot}`} />{label}</div>
           ))}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, fontSize: 9 }}>
-            {recording
+            {countdown !== null
+              ? <><div className="dot r" /><span style={{ color: C.red }}>T{takeCount} starting in {countdown}…</span></>
+              : recording
               ? <><div className="dot r" /><span style={{ color: C.red }}>T{takeCount} recording</span></>
               : <span style={{ color: C.muted }}>{displayCode}</span>}
             <span style={{ color: showDetails ? C.blue : C.muted, cursor: "pointer", WebkitAppRegion: "no-drag" }} onClick={() => setShowDetails(d => !d)}>Details</span>
@@ -409,12 +447,25 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             </div>
             <div>
               <div className="sec-label">Transport</div>
+              {countdown !== null && (
+                <div
+                  style={{
+                    textAlign: "center", marginBottom: 6, padding: "6px 0 8px",
+                    background: "#1a0808", border: `1px solid #5c1a1a`, borderRadius: 4,
+                  }}
+                >
+                  <div style={{ fontSize: 9, color: C.red, letterSpacing: "0.12em" }}>RECORDING IN</div>
+                  <div style={{ fontSize: 34, fontWeight: 700, color: C.red, lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
+                    {countdown}
+                  </div>
+                </div>
+              )}
               <div
                 className={`ebtn ebtn-rec ${recording ? "on" : ""}`}
                 style={{ width: "100%", textAlign: "center", marginBottom: 6 }}
                 onClick={handleRec}
               >
-                {recording ? "■ Stop" : "● Rec"}
+                {countdown !== null ? "■ Cancel" : recording ? "■ Stop" : "● Rec"}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <div

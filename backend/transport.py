@@ -3,6 +3,7 @@ import math
 import os
 import queue
 import threading
+import time
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -223,7 +224,10 @@ def record():
         timer = threading.Timer(COUNTDOWN_SECONDS, _begin_capture,
                                 args=(token, fmt, _take, timestamp))
         timer.daemon = True
-        _pending = {"timer": timer, "token": token}
+        # deadline lets /status report the seconds remaining, so both apps
+        # can show a synced countdown off one source of truth.
+        _pending = {"timer": timer, "token": token,
+                    "deadline": time.monotonic() + COUNTDOWN_SECONDS}
         timer.start()
         print(f"Record armed — T{_take} starts in {COUNTDOWN_SECONDS}s", flush=True)
         return jsonify({"recording": True, "take": _take,
@@ -259,7 +263,14 @@ def status():
         # Countdown counts as "recording" for every consumer: the artist app
         # keys its 3-2-1 off this flag and the engineer UI shows the live take.
         active = _recording or _pending is not None
-        return jsonify({"recording": active, "take": _take})
+        # countdown = whole seconds left before capture actually begins (0 when
+        # not counting). Both the artist and engineer UIs render their 3-2-1
+        # from this single value.
+        countdown = 0
+        if _pending is not None:
+            countdown = max(0, min(COUNTDOWN_SECONDS,
+                                   math.ceil(_pending["deadline"] - time.monotonic())))
+        return jsonify({"recording": active, "take": _take, "countdown": countdown})
 
 
 @app.route("/levels", methods=["GET"])
@@ -273,6 +284,14 @@ def cue_local(param, value):
         return jsonify({"error": "unknown param"}), 400
     cue_receiver.params[param] = max(0, min(100, value))
     return jsonify({"ok": True, "param": param, "value": cue_receiver.params[param]})
+
+
+@app.route("/cue/params", methods=["GET"])
+def cue_params():
+    """Current cue-mix values — reflects both the engineer's changes (arriving
+    via cue_receiver's UDP listener) and the artist's own local adjustments.
+    The artist app polls this to keep its knob visuals in sync."""
+    return jsonify(dict(cue_receiver.params))
 
 
 if __name__ == "__main__":

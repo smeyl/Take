@@ -468,6 +468,27 @@ class ArtistScreen : public juce::Component,
             repaint();
         }
 
+        // Update a knob to a value pushed from the backend (engineer's change or
+        // the artist's own, read back). Skips the knob being dragged so a live
+        // drag isn't yanked by a poll, and only repaints on an actual change.
+        void setParamValue (const juce::String& param, float value)
+        {
+            for (int i = 0; i < 6; ++i)
+            {
+                if (param == knobs[i].param)
+                {
+                    if (i == dragKnobIndex) return;  // don't fight a live drag
+                    value = juce::jlimit (0.0f, 100.0f, value);
+                    if (std::abs (knobs[i].value - value) > 0.01f)
+                    {
+                        knobs[i].value = value;
+                        repaint();
+                    }
+                    return;
+                }
+            }
+        }
+
     private:
         KnobDef knobs[6];
         int     dragKnobIndex  { -1 };
@@ -910,6 +931,84 @@ class ArtistScreen : public juce::Component,
     };
 
     //==========================================================================
+    // Polls the local transport for the current cue-mix values so the knobs
+    // reflect the engineer's changes (and the artist's own), not just drags.
+    class CuePoller : public juce::Thread
+    {
+    public:
+        std::function<void(juce::var)> onResult;  // the /cue/params object
+
+        CuePoller() : juce::Thread ("TakeCuePoller") {}
+
+        void run() override
+        {
+            while (!threadShouldExit())
+            {
+                juce::String body;
+                if (rawHttpGet ("127.0.0.1", 5004, "/cue/params", body))
+                {
+                    auto json = juce::JSON::parse (body);
+                    if (json.isObject())
+                    {
+                        auto cb = onResult;
+                        if (cb)
+                            juce::MessageManager::callAsync ([cb, json]() mutable
+                            {
+                                cb (json);
+                            });
+                    }
+                }
+                wait (250);
+            }
+        }
+
+    private:
+        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
+        {
+            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) return false;
+
+            struct timeval tv { 0, 200000 };  // 200ms timeout — fast local poll
+            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+            struct sockaddr_in addr {};
+            addr.sin_family = AF_INET;
+            addr.sin_port   = htons ((uint16_t) port);
+            ::inet_pton (AF_INET, host, &addr.sin_addr);
+
+            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+            {
+                ::close (fd);
+                return false;
+            }
+
+            char req[256];
+            ::snprintf (req, sizeof (req),
+                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+                        path, host);
+            ::send (fd, req, ::strlen (req), 0);
+
+            juce::MemoryBlock buf;
+            char    tmp[512];
+            ssize_t n;
+            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+                buf.append (tmp, (size_t) n);
+            ::close (fd);
+
+            if (buf.getSize() == 0) return false;
+
+            juce::String full = juce::String::fromUTF8 (
+                static_cast<const char*> (buf.getData()), (int) buf.getSize());
+            const int sep = full.indexOf ("\r\n\r\n");
+            if (sep < 0) return false;
+
+            body = full.substring (sep + 4).trim();
+            return body.isNotEmpty();
+        }
+    };
+
+    //==========================================================================
     class MarkersPoller : public juce::Thread
     {
     public:
@@ -1182,12 +1281,23 @@ public:
         };
         punchPoller.startThread();
 
+        cuePoller.onResult = [safeThis] (juce::var params)
+        {
+            if (safeThis == nullptr) return;
+            if (auto* obj = params.getDynamicObject())
+                for (auto& prop : obj->getProperties())
+                    safeThis->cueMixPanel.setParamValue (prop.name.toString(),
+                                                         (float)(double) prop.value);
+        };
+        cuePoller.startThread();
+
         startTimer (2000);   // backing track file check
     }
 
     ~ArtistScreen() override
     {
         stopTimer();
+        cuePoller.stopThread (500);
         punchPoller.stopThread (500);
         markersPoller.stopThread (500);
         meterPoller.stopThread (500);
@@ -1513,6 +1623,7 @@ private:
     MeterPoller     meterPoller;
     MarkersPoller   markersPoller;
     PunchPoller     punchPoller;
+    CuePoller       cuePoller;
     CountdownTimer  countdownTimer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
