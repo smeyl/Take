@@ -16,3 +16,12 @@ node_modules/
 assets/*.png
 assets/*.icns
 assets/*.iconset
+
+# Xcode build intermediates (regenerated on every build) — never commit these.
+artist-app/Take/Builds/MacOSX/build/Take.build/
+artist-app/Take/Builds/MacOSX/build/XCBuildData/
+# Compiled artist app. NOTE: the existing Take.app is still tracked for now so
+# clones run out of the box; this rule only takes effect once it's untracked in
+# the post-demo history cleanup. Until then a rebuilt binary is a change to a
+# tracked file and WILL still be committed if you `git add` it.
+artist-app/Take/Builds/MacOSX/build/Debug/Take.app
