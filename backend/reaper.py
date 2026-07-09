@@ -18,6 +18,7 @@ ACTION_ARM_TRACK         = 9      # Track: Toggle record arm for selected track
 # take_session.lua handles these — auto-started with Reaper via __startup.lua (see setup.sh).
 CMD_FILE   = "/tmp/take_reaper_cmd"
 START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
+BOUNCE_DONE_FILE = "/tmp/take_bounce_done"  # written by Lua when a render finishes
 
 def _write_cmd(lines):
     # Write-then-rename so take_session.lua (polling ~30x/s) can never read a
@@ -106,6 +107,22 @@ def start_recording(track=0):
 def stop_recording():
     _write_cmd(["stop"])
     return True
+
+
+def start_bounce():
+    """Ask take_session.lua to render with the project's most recent render
+    settings. Clears the prior done-signal so the caller detects the new one."""
+    try:
+        os.remove(BOUNCE_DONE_FILE)
+    except OSError:
+        pass
+    _write_cmd(["bounce"])
+    return True
+
+
+def bounce_signalled():
+    """True once take_session.lua has finished the render for start_bounce()."""
+    return os.path.exists(BOUNCE_DONE_FILE)
 
 
 def return_to_zero():

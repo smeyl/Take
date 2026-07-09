@@ -9,6 +9,8 @@
 --       rtz               — return to zero (project start)
 --       swap\n{filepath}\n{track_idx}\n{start_time}
 --                         — replace the streamed item with the lossless file
+--       bounce            — render with the most recent render settings, then
+--                           write /tmp/take_bounce_done so bounce.py can send it
 --   * exports the track list to /tmp/take_tracks.json whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
 --   * registers take_insert_media.lua as an action on startup and writes its
@@ -23,6 +25,7 @@ local START_FILE    = "/tmp/take_record_start"
 local TRACKS_FILE   = "/tmp/take_tracks.json"
 local MARKERS_FILE  = "/tmp/take_markers.json"
 local INSERT_ID_FILE = "/tmp/take_insert_cmd_id"
+local BOUNCE_DONE_FILE = "/tmp/take_bounce_done"  -- written when a render finishes
 
 local last_tracks_json  = nil
 local last_markers_json = nil
@@ -150,6 +153,21 @@ local function handle_swap(filepath, track_idx, start_time)
   reaper.UpdateArrange()
 end
 
+local function handle_bounce()
+  os.remove(BOUNCE_DONE_FILE)  -- clear any prior signal before this render
+  -- Render with the project's most recent render settings, no dialog. This is
+  -- the same action bounce.py used to invoke over the Reaper web API (which
+  -- 404s on this setup); run in-process, Main_OnCommand blocks until the
+  -- render finishes, so the output file is complete once it returns.
+  reaper.Main_OnCommand(42230, 0)
+  -- Signal completion. bounce.py waits for this, then verifies + sends the file.
+  local f = io.open(BOUNCE_DONE_FILE, "w")
+  if f then
+    f:write("done\n")
+    f:close()
+  end
+end
+
 --------------------------------------------------------------------------------
 -- Main loop
 
@@ -177,6 +195,8 @@ local function poll_commands()
   elseif cmd == "swap" then
     -- line2 = filepath, line3 = track_idx, line4 = start_time
     handle_swap(line2, tonumber(line3) or 0, tonumber(line4) or 0)
+  elseif cmd == "bounce" then
+    handle_bounce()
   end
 end
 
