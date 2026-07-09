@@ -6,6 +6,7 @@ lsof -ti :5001 | xargs kill -9 2>/dev/null
 lsof -ti :5002 | xargs kill -9 2>/dev/null
 lsof -ti :5006 | xargs kill -9 2>/dev/null
 lsof -ti :5010 | xargs kill -9 2>/dev/null
+lsof -ti udp:5011 | xargs kill -9 2>/dev/null   # relay discovery listener
 sleep 0.5
 
 cleanup() {

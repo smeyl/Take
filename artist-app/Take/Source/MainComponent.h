@@ -90,18 +90,37 @@ public:
             ed.setJustification (juce::Justification::centred);
         };
 
-        setupSmallEditor (relayHostEditor, "Engineer IP (auto)");
+        // Manual IP entry — a fallback only. The primary flow is UDP discovery
+        // (the artist enters just the code); this field appears if discovery
+        // fails or the user opts into it via the toggle below.
+        setupSmallEditor (relayHostEditor, "Engineer's IP address");
         // Pre-fill from the session file written by start_artist.py, if present
+        // (only exists after a prior successful join) — a convenience for the
+        // manual path; discovery is tried first regardless.
         {
             auto known = TakeUI::readRelayHost();
             if (known != "127.0.0.1")
                 relayHostEditor.setText (known, juce::dontSendNotification);
         }
         addAndMakeVisible (relayHostEditor);
-        // The session file usually doesn't exist yet when this screen first
-        // renders (start_artist.py discovers the engineer asynchronously) —
-        // keep checking until it appears. timerCallback stops once filled.
-        startTimer (1000);
+        startTimer (1000);  // keep the manual field pre-filled if a file appears
+
+        hintLabel.setText ("Find it on the engineer's screen",
+                           juce::dontSendNotification);
+        hintLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
+        hintLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF5C5C6E));
+        hintLabel.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (hintLabel);
+
+        // Clickable text link that reveals the manual IP field. Doesn't
+        // intercept clicks itself — the parent's mouseDown handles the hit test.
+        manualToggleLabel.setText ("Can't connect? Enter IP manually",
+                                   juce::dontSendNotification);
+        manualToggleLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
+        manualToggleLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF4F8FFF));
+        manualToggleLabel.setJustificationType (juce::Justification::centred);
+        manualToggleLabel.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (manualToggleLabel);
 
         joinButton.setButtonText ("Join session");
         joinButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
@@ -116,6 +135,8 @@ public:
         errorLabel.setJustificationType (juce::Justification::centred);
         errorLabel.setVisible (false);
         addAndMakeVisible (errorLabel);
+
+        setManualMode (false);  // discovery-first: hide the IP field by default
     }
 
     ~RoleSelectScreen() override
@@ -160,9 +181,40 @@ public:
 
         subtitleLabel.setBounds (0,  228, w,   22);
         sessionCodeEditor.setBounds (cx, 266, 240, 46);
-        relayHostEditor.setBounds   (cx, 320, 240, 34);
-        joinButton.setBounds        (cx, 370, 240, 46);
-        errorLabel.setBounds        (0,  424, w,   22);
+
+        if (manualMode)
+        {
+            relayHostEditor.setBounds (cx, 320, 240, 34);
+            hintLabel.setBounds       (0,  356, w,   16);
+            joinButton.setBounds      (cx, 380, 240, 46);
+            errorLabel.setBounds      (0,  434, w,   22);
+        }
+        else
+        {
+            joinButton.setBounds        (cx, 326, 240, 46);
+            manualToggleLabel.setBounds (0,  384, w,   18);
+            errorLabel.setBounds        (0,  420, w,   22);
+        }
+    }
+
+    // Reveal (or hide) the manual IP field. Discovery is the default; this is
+    // the "Can't connect?" escape hatch, also auto-shown when discovery fails.
+    void setManualMode (bool on)
+    {
+        manualMode = on;
+        relayHostEditor.setVisible (on);
+        hintLabel.setVisible (on);
+        manualToggleLabel.setVisible (! on);
+        resized();
+        repaint();
+        if (on)
+            relayHostEditor.grabKeyboardFocus();
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! manualMode && manualToggleLabel.getBounds().contains (e.getPosition()))
+            setManualMode (true);
     }
 
     // juce::TextEditor::Listener
@@ -225,6 +277,7 @@ private:
         }
 
         joinButton.setEnabled (false);
+        joinButton.setButtonText ("Connecting\xE2\x80\xA6");
         errorLabel.setVisible (false);
 
         // Capture value types, the onJoin callback, and a SafePointer for error
@@ -234,16 +287,44 @@ private:
         auto cb = onJoin;
         juce::Component::SafePointer<RoleSelectScreen> safeThis (this);
 
-        // Relay host: typed IP wins; otherwise /tmp/take_session.json (written by
-        // start_artist.py once it has joined); 127.0.0.1 for single-machine dev.
-        juce::String relayHost = relayHostEditor.getText().trim();
-        if (relayHost.isEmpty())
-            relayHost = TakeUI::readRelayHost();
+        // If the user opened the manual field and typed an IP, honour it and
+        // skip discovery. Otherwise discovery is the primary path — a stale
+        // pre-fill in the hidden field must NOT pre-empt it.
+        juce::String typedHost = manualMode ? relayHostEditor.getText().trim()
+                                            : juce::String();
 
-        juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
-
-        std::thread ([code, relayHost, body, cb, safeThis]() mutable
+        std::thread ([code, ip, typedHost, cb, safeThis]() mutable
         {
+            juce::String relayHost = typedHost;
+
+            // 1. Primary path: find the relay by broadcasting the code on the LAN.
+            if (relayHost.isEmpty())
+            {
+                juce::String found;
+                if (discoverRelay (code, ip, found))
+                    relayHost = found;
+            }
+
+            // 2. No IP at all — reveal the manual field (pre-filled from a prior
+            //    session if available) and let the artist enter it.
+            if (relayHost.isEmpty())
+            {
+                juce::MessageManager::callAsync ([safeThis]() mutable
+                {
+                    if (safeThis == nullptr) return;
+                    safeThis->joinButton.setEnabled (true);
+                    safeThis->joinButton.setButtonText ("Join session");
+                    safeThis->setManualMode (true);
+                    safeThis->errorLabel.setText (
+                        "Couldn't find the engineer on this network",
+                        juce::dontSendNotification);
+                    safeThis->errorLabel.setVisible (true);
+                });
+                return;
+            }
+
+            // 3. Normal HTTP join to the resolved relay host.
+            juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
             juce::String engineerIP;
             int statusCode = 0;
             const bool ok = rawHttpPost (relayHost.toRawUTF8(), 5010, "/session/join",
@@ -259,6 +340,8 @@ private:
                 }
                 if (safeThis == nullptr) return;
                 safeThis->joinButton.setEnabled (true);
+                safeThis->joinButton.setButtonText ("Join session");
+                safeThis->setManualMode (true);  // let them try a manual IP
                 safeThis->errorLabel.setText (
                     statusCode == 404 ? "Session not found"
                                       : "Could not reach the engineer",
@@ -266,6 +349,82 @@ private:
                 safeThis->errorLabel.setVisible (true);
             });
         }).detach();
+    }
+
+    // LAN discovery: broadcast the session code on UDP 5011 and wait up to 2s
+    // for the relay's reply carrying its IP. Returns true and sets relayIpOut on
+    // success. Sends to both the limited broadcast and the /24 subnet-directed
+    // broadcast (the reliable path on most home/office LANs). Returns false if
+    // nothing answers — the caller then falls back to manual IP entry.
+    static bool discoverRelay (const juce::String& code, const juce::String& localIP,
+                               juce::String& relayIpOut)
+    {
+        int fd = ::socket (AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) return false;
+
+        int one = 1;
+        ::setsockopt (fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof (one));
+
+        struct timeval tv { 2, 0 };  // 2s reply window
+        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+
+        // Bind an ephemeral port so the relay's unicast reply comes back to us.
+        struct sockaddr_in local {};
+        local.sin_family      = AF_INET;
+        local.sin_addr.s_addr = INADDR_ANY;
+        local.sin_port        = 0;
+        if (::bind (fd, (struct sockaddr*) &local, sizeof (local)) < 0)
+        {
+            ::close (fd);
+            return false;
+        }
+
+        const juce::String payload = juce::String ("TAKE_DISCOVER_V1:") + code;
+
+        auto sendTo = [&] (const juce::String& ipStr)
+        {
+            struct sockaddr_in dst {};
+            dst.sin_family = AF_INET;
+            dst.sin_port   = htons (5011);
+            if (::inet_pton (AF_INET, ipStr.toRawUTF8(), &dst.sin_addr) == 1)
+                ::sendto (fd, payload.toRawUTF8(), payload.getNumBytesAsUTF8(), 0,
+                          (struct sockaddr*) &dst, sizeof (dst));
+        };
+
+        sendTo ("255.255.255.255");
+        // /24 subnet-directed broadcast — common home/office layout
+        auto octets = juce::StringArray::fromTokens (localIP, ".", "");
+        if (octets.size() == 4)
+            sendTo (octets[0] + "." + octets[1] + "." + octets[2] + ".255");
+
+        // Await a valid reply (may need to skip a stray packet within the window).
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            char buf[512];
+            struct sockaddr_in from {};
+            socklen_t fromLen = sizeof (from);
+            ssize_t n = ::recvfrom (fd, buf, sizeof (buf) - 1, 0,
+                                    (struct sockaddr*) &from, &fromLen);
+            if (n <= 0) break;  // timeout or error
+            buf[n] = 0;
+
+            auto json = juce::JSON::parse (juce::String::fromUTF8 (buf, (int) n));
+            if (json.isObject()
+                && json["magic"].toString() == "TAKE_DISCOVER_V1"
+                && json["code"].toString()  == code)
+            {
+                auto foundIp = json["relay_ip"].toString();
+                if (foundIp.isNotEmpty())
+                {
+                    relayIpOut = foundIp;
+                    ::close (fd);
+                    return true;
+                }
+            }
+        }
+
+        ::close (fd);
+        return false;
     }
 
     // POSIX HTTP POST - avoids juce::URL which fires internal assertions on connection failure.
@@ -346,9 +505,12 @@ private:
     juce::Label      subtitleLabel;
     juce::TextEditor sessionCodeEditor;
     juce::TextEditor relayHostEditor;
+    juce::Label      hintLabel;
+    juce::Label      manualToggleLabel;
     juce::TextButton joinButton;
     juce::Label      errorLabel;
     bool             isFormattingCode { false };
+    bool             manualMode       { false };
 };
 
 //==============================================================================

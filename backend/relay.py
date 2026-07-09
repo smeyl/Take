@@ -1,6 +1,8 @@
+import json
 import random
 import socket as _socket
 import string
+import threading
 import time
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -25,6 +27,12 @@ selected_track = 0  # destination track index, set from the engineer UI
 
 CHARS = string.ascii_uppercase + string.digits
 CUE_PORT = 5003
+
+# LAN discovery: the artist broadcasts a session code on this UDP port and the
+# relay answers with its own IP, so the artist never has to know it. The magic
+# prefix keeps the listener from reacting to unrelated broadcast traffic.
+DISCOVERY_PORT  = 5011
+DISCOVERY_MAGIC = "TAKE_DISCOVER_V1"
 
 
 def generate_code():
@@ -77,7 +85,10 @@ def new_session():
         "heartbeats": {"engineer": None, "artist": None},
     }
     log(f"New session {code} — engineer {engineer_ip}")
-    return jsonify({"code": code})
+    # engineer_ip is returned so the engineer UI can show it next to the code —
+    # the artist needs both to join, and the relay already resolved it to this
+    # machine's LAN address.
+    return jsonify({"code": code, "engineer_ip": engineer_ip})
 
 
 ACTIVE_TTL = 5 * 60  # 5 minutes
@@ -385,8 +396,56 @@ def reaper_status():
         return jsonify({"reachable": False})
 
 
+def run_discovery_listener():
+    """Answer LAN discovery broadcasts. The artist sends
+    'TAKE_DISCOVER_V1:<CODE>' to the subnet broadcast on UDP 5011; if the code
+    names an active session we reply (unicast) with this relay's IP so the
+    artist can make its normal /session/join call — no manual IP needed.
+    Unknown codes get no reply, so it never leaks which codes exist."""
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", DISCOVERY_PORT))
+    except OSError:
+        print(f"FATAL: discovery listener could not bind UDP {DISCOVERY_PORT} "
+              f"(lsof -i :{DISCOVERY_PORT}). Artists will have to enter the IP "
+              f"manually.", flush=True)
+        return
+    log(f"Discovery listener on UDP {DISCOVERY_PORT}")
+    prefix = DISCOVERY_MAGIC + ":"
+    while True:
+        try:
+            data, addr = sock.recvfrom(256)
+        except OSError:
+            continue
+        text = data.decode("utf-8", "ignore").strip()
+        if not text.startswith(prefix):
+            continue
+        code = text[len(prefix):].strip().upper()
+        prune_expired()
+        session = sessions.get(code)
+        if not session:
+            continue  # unknown code — stay silent
+        relay_ip = session.get("engineer_ip") or get_local_ip()
+        reply = json.dumps({
+            "magic": DISCOVERY_MAGIC,
+            "code": code,
+            "relay_ip": relay_ip,
+            "relay_port": 5010,
+        }).encode()
+        try:
+            sock.sendto(reply, addr)
+            log(f"Discovery: {code} → {addr[0]} (relay {relay_ip})")
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":
     import ports
-    ports.ensure_free([(5010, "tcp", "relay")])
+    ports.ensure_free([
+        (5010,           "tcp", "relay"),
+        (DISCOVERY_PORT, "udp", "discovery"),
+    ])
+    threading.Thread(target=run_discovery_listener, name="discovery", daemon=True).start()
     log("Take relay server starting on port 5010")
     app.run(host="0.0.0.0", port=5010)

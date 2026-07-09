@@ -14,6 +14,7 @@ two-machine session; in single-machine dev everything shares localhost.
 | 5007 | TCP   | Stream quality (Flask)   | artist   | Engineer UI sets mic stream encoding (PCM16/PCM24/Float32) via relay proxy. |
 | 5009 | TCP   | Backing receiver (Flask) | artist   | Engineer → artist: bounced backing track. Same code as 5001 (`receiver.py`) on a separate port, so both can run on one machine in dev. |
 | 5010 | TCP   | Relay (Flask)            | engineer | Session codes, heartbeats, timecode/punch state, artist-machine proxy, Reaper transport commands. |
+| 5011 | UDP   | Relay discovery          | engineer | Artist broadcasts `TAKE_DISCOVER_V1:<code>`; relay replies with its own IP so the artist joins with just the code — no manual IP. Falls back to manual entry if broadcast is blocked. |
 | 8080 | TCP   | Reaper web interface     | engineer | Reaper's own web control API (enable in Reaper preferences). Not bound by Take. |
 
 ## Conflict detection

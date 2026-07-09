@@ -5,6 +5,7 @@ const RELAY = "http://localhost:5010";
 
 export default function SessionScreen({ onStart }) {
   const [rawCode, setRawCode] = useState(null);  // null=polling, ""=error, "XXXXXX"=found
+  const [engineerIP, setEngineerIP] = useState("");
   const [creating, setCreating] = useState(false);
   const pollRef = useRef(null);
 
@@ -15,9 +16,17 @@ export default function SessionScreen({ onStart }) {
     }
   };
 
-  // Register a new session with the relay and return its code (null on failure).
+  // Apply a relay session response ({code, engineer_ip}) to the UI. The artist
+  // needs both the code and the engineer's IP to join, so we surface both.
+  const applySession = (data) => {
+    setRawCode(data?.code ?? "");
+    if (data?.engineer_ip) setEngineerIP(data.engineer_ip);
+  };
+
+  // Register a new session with the relay. Returns {code, engineer_ip} or null.
   // The relay maps a loopback ip to its own LAN IP, so sending 127.0.0.1 is
-  // safe and keeps two-machine sessions working.
+  // safe and keeps two-machine sessions working — and it hands that resolved
+  // LAN IP back so we can show it to the artist.
   const requestNewCode = async () => {
     try {
       const r = await fetch(`${RELAY}/session/new`, {
@@ -25,7 +34,7 @@ export default function SessionScreen({ onStart }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ip: "127.0.0.1" }),
       });
-      return r.ok ? (await r.json()).code : null;
+      return r.ok ? await r.json() : null;
     } catch {
       return null;
     }
@@ -36,8 +45,8 @@ export default function SessionScreen({ onStart }) {
       try {
         const r = await fetch(`${RELAY}/session/active`);
         if (r.ok) {
-          // A session is already registered with the relay — reuse its code.
-          setRawCode((await r.json()).code);
+          // A session is already registered with the relay — reuse it.
+          applySession(await r.json());
           stopPolling();
           return;
         }
@@ -46,7 +55,7 @@ export default function SessionScreen({ onStart }) {
           stopPolling();
           setCreating(true);
           try {
-            setRawCode((await requestNewCode()) ?? "");
+            applySession(await requestNewCode());
           } finally {
             setCreating(false);
           }
@@ -66,7 +75,7 @@ export default function SessionScreen({ onStart }) {
     stopPolling();
     setCreating(true);
     try {
-      setRawCode((await requestNewCode()) ?? "");
+      applySession(await requestNewCode());
     } finally {
       setCreating(false);
     }
@@ -93,6 +102,9 @@ export default function SessionScreen({ onStart }) {
           border: `1px solid ${C.border}`, borderRadius: 6,
           padding: "20px 24px 16px", textAlign: "center", marginBottom: 16,
         }}>
+          <div style={{ fontSize: 9, color: C.muted, letterSpacing: "0.08em", marginBottom: 4 }}>
+            SESSION CODE
+          </div>
           <div style={{
             fontFamily: "'DM Mono', 'Courier New', monospace",
             fontSize: 24, letterSpacing: "0.14em",
@@ -112,6 +124,22 @@ export default function SessionScreen({ onStart }) {
             Generate new code
           </span>
         </div>
+
+        <div style={{ fontSize: 10, color: C.muted, textAlign: "center", marginBottom: 16, lineHeight: 1.5 }}>
+          Give the artist the session code — they'll find you on the network automatically.
+        </div>
+
+        {/* Relay IP kept as small debug info — the artist no longer needs it
+            unless discovery is blocked and they fall back to manual entry. */}
+        {engineerIP && (
+          <div style={{
+            fontFamily: "'DM Mono', 'Courier New', monospace",
+            fontSize: 9, color: C.dim, textAlign: "center",
+            marginBottom: 16, userSelect: "text",
+          }}>
+            relay {engineerIP}
+          </div>
+        )}
 
         <div style={{ fontSize: 10, marginBottom: 8, textAlign: "center", minHeight: 16 }}>
           {rawCode === null && !creating && (
