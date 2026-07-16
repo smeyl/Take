@@ -109,11 +109,11 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
 
 ## Reaper setup
 
-1. Enable the web interface: **Preferences → Control/OSC/web → Add → Web browser interface** (port 8080)
-2. Run `backend/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`). Every Reaper launch then automatically:
-   - listens for Take's transport commands (record/stop/RTZ/swap)
-   - keeps track and marker exports current — no manual script runs needed
-   - self-registers the insert action — no command-ID copying needed
+Run `backend/setup.sh` — it installs `take_session.lua` plus an auto-start hook (`Scripts/__startup.lua`). Every Reaper launch then automatically:
+   - listens for Take's transport commands (record/stop/RTZ/swap/insert/bounce)
+   - keeps track, marker, and transport-state exports current — no manual script runs needed
+
+All Reaper control is file-based Lua IPC; Take does not use Reaper's web control API at all.
 
 **Bounce & send** needs no setup: each bounce renders the master mix of the entire project to a uniquely named MP3 in `/tmp` (so Reaper never shows an overwrite prompt), sends it to the artist, and restores your project's own render settings afterwards.
 

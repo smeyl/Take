@@ -18,18 +18,6 @@ namespace TakeUI
         return juce::Font (juce::Font::getDefaultMonospacedFontName(), size, style);
     }
 
-    inline juce::String generateSessionCode()
-    {
-        juce::Random rng;
-        auto pair = [&]() {
-            return juce::String::charToString ((juce::juce_wchar) ('A' + rng.nextInt (26)))
-                   + juce::String (rng.nextInt (10));
-        };
-        // Middle dot (U+00B7) — matches the engineer app's XX · XX · XX format
-        auto sep = " " + juce::String::fromUTF8 ("\xC2\xB7") + " ";
-        return pair() + sep + pair() + sep + pair();
-    }
-
     // Read the relay host from the session file written by start_artist.py.
     // Falls back to 127.0.0.1 for single-machine dev (file not yet present,
     // or the Python backend hasn't joined yet when JUCE opens).
@@ -54,8 +42,7 @@ namespace TakeUI
 }
 
 //==============================================================================
-class ArtistScreen : public juce::Component,
-                     public juce::Timer
+class ArtistScreen : public juce::Component
 {
     //==========================================================================
     struct Marker { juce::String name; float position; };  // position in seconds
@@ -846,8 +833,6 @@ class ArtistScreen : public juce::Component,
         // Plain POSIX TCP request - avoids juce::URL which fires assertions on connection failure
         static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
         {
-            DBG ("rawHttpGet called: " + juce::String (host) + ":" + juce::String (port));
-
             int fd = ::socket (AF_INET, SOCK_STREAM, 0);
             if (fd < 0) return false;
 
@@ -879,19 +864,14 @@ class ArtistScreen : public juce::Component,
                 buf.append (tmp, (size_t) n);
             ::close (fd);
 
-            DBG ("rawHttpGet: recv loop done, buf.getSize()=" + juce::String ((int) buf.getSize()));
             if (buf.getSize() == 0) return false;
 
-            DBG ("rawHttpGet: constructing juce::String from buf");
             juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
 
             int sep = full.indexOf ("\r\n\r\n");
-            DBG ("rawHttpGet: header sep=" + juce::String (sep));
             if (sep < 0) return false;
 
-            DBG ("rawHttpGet: constructing body substring");
             body = full.substring (sep + 4).trim();
-            DBG ("rawHttpGet: body=" + body);
             return body.isNotEmpty();
         }
     };
@@ -1241,8 +1221,7 @@ public:
         };
 
         addAndMakeVisible (recordRing);
-        addAndMakeVisible (levelMeter);
-        levelMeter.setLevel (-18.0f, -22.0f);
+        addAndMakeVisible (levelMeter);   // stays at silence until real levels arrive
 
         addAndMakeVisible (trackWindow);
         addAndMakeVisible (sectionNow);
@@ -1271,8 +1250,17 @@ public:
             safeThis->serverConnected           = connected;
             safeThis->recordRing.takeNumber     = take;
             safeThis->latencyMs                 = latencyMs;
-            if (backingDuration > 0.0f)
+            // Backing track presence + length come from the local transport
+            // server (which loaded the file) — never from a filesystem path,
+            // which would hardcode where the repo lives on this machine.
+            const bool loaded = backingDuration > 0.0f;
+            if (loaded)
                 safeThis->trackWindow.totalDuration = backingDuration;
+            if (loaded != safeThis->trackWindow.backingLoaded)
+            {
+                safeThis->trackWindow.backingLoaded = loaded;
+                safeThis->trackWindow.repaint();
+            }
 
             bool wasRecording = safeThis->lastBackendRecording;
             safeThis->lastBackendRecording = recording;
@@ -1339,13 +1327,10 @@ public:
                                                          (float)(double) prop.value);
         };
         cuePoller.startThread();
-
-        startTimer (2000);   // backing track file check
     }
 
     ~ArtistScreen() override
     {
-        stopTimer();
         cuePoller.stopThread (500);
         punchPoller.stopThread (500);
         markersPoller.stopThread (500);
@@ -1385,18 +1370,6 @@ public:
         }
 
         repaint();
-    }
-
-    void timerCallback() override
-    {
-        auto f = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
-                             .getChildFile ("Desktop/Take/incoming/take_backing_track.mp3");
-        const bool found = f.existsAsFile();
-        if (found != trackWindow.backingLoaded)
-        {
-            trackWindow.backingLoaded = found;
-            trackWindow.repaint();
-        }
     }
 
     void paint (juce::Graphics& g) override
@@ -1658,7 +1631,7 @@ private:
     int             latencyMs             { 0 };
     bool            lastBackendRecording  { false };
     DetailsPanel    detailsPanel;
-    juce::String    sessionCode { TakeUI::generateSessionCode() };
+    juce::String    sessionCode;   // set from the real joined session — never a placeholder
     juce::String    relayCode;
     juce::String    relayHost   { "127.0.0.1" };  // set in setEngineerIP(); used by pollers and end-session
     RecordRing      recordRing;

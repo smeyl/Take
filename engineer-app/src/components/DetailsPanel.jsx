@@ -94,7 +94,6 @@ export default function DetailsPanel({ onClose, sessionCode }) {
     ["Artist",    conns.artist],
     ["Reaper",    conns.reaper],
     ["Transport", conns.transport],
-    ["Timecode",  false],        // UDP — can't check via HTTP
   ];
 
   return (

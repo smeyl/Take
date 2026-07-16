@@ -64,7 +64,7 @@ done
 echo "Installing Reaper scripts..."
 SCRIPTS="$HOME/Library/Application Support/REAPER/Scripts"
 mkdir -p "$SCRIPTS"
-cp take_session.lua take_insert_media.lua "$SCRIPTS/"
+cp take_session.lua "$SCRIPTS/"
 
 # Auto-start the session script with Reaper (idempotent)
 STARTUP="$SCRIPTS/__startup.lua"
@@ -76,7 +76,8 @@ fi
 # Remove scripts superseded by take_session.lua
 rm -f "$SCRIPTS/take_reaper_poll.lua" \
       "$SCRIPTS/take_export_tracks.lua" \
-      "$SCRIPTS/take_export_markers.lua"
+      "$SCRIPTS/take_export_markers.lua" \
+      "$SCRIPTS/take_insert_media.lua"
 
 echo "Setup complete — zero Reaper configuration needed."
 echo "On every Reaper launch the Take script starts automatically, keeps track"

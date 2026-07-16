@@ -109,6 +109,11 @@ def _audio_thread():
         except Exception:
             continue
     if stream is None:
+        # Without this stream there are no meters, no mic stream to the
+        # engineer, and nothing to record — never die silently.
+        print("FATAL: could not open any audio input device — check microphone "
+              "permissions (System Settings → Privacy) and that an input device "
+              "exists. No levels, no stream, no recording.", flush=True)
         pa.terminate()
         return
 

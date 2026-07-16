@@ -10,10 +10,10 @@ import pyaudio
 import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
 import ports
+import reaper
 import stream_sender
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT
-from reaper import BASE
 
 RELAY_URL = "http://127.0.0.1:5010"
 TRANSPORT_PORT = 5004
@@ -60,14 +60,6 @@ def get_local_ip():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
-
-
-def check_reaper():
-    try:
-        requests.get(BASE, timeout=3)
-        return True
-    except Exception:
-        return False
 
 
 def _find_blackhole_device(audio):
@@ -171,7 +163,7 @@ if __name__ == "__main__":
         bounce.TARGET_IP = artist_ip
         print(f"Artist connected — {artist_ip}\n")
 
-        reaper_ok = check_reaper()
+        reaper_ok = reaper.script_alive()
 
         shutdown_reason = [None]
 
@@ -204,8 +196,7 @@ if __name__ == "__main__":
         print("Take — engineer ready")
         print(f"  File receiver  : 0.0.0.0:{PORT} → {INCOMING_PATH}/")
         print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
-        print(f"  Reaper         : {BASE} ({'reachable' if reaper_ok else 'NOT REACHABLE'})")
-        print(f"  Insert action  : {engineer._insert_action_id()}")
+        print(f"  Take script    : {'running in Reaper' if reaper_ok else 'NOT RUNNING — start Reaper (take_session.lua loads automatically)'}")
         print(f"  Timecode       : UDP → {artist_ip}:{timecode.PORT}")
         print("Press Ctrl+C to stop.\n")
 

@@ -3,7 +3,6 @@
 #include <JuceHeader.h>
 #include <thread>
 #include "ArtistScreen.h"
-#include "EngineerScreen.h"
 
 //==============================================================================
 class TakeLookAndFeel : public juce::LookAndFeel_V4
@@ -432,7 +431,6 @@ private:
                              const juce::String& jsonBody, juce::String& responseIP,
                              int& statusCode)
     {
-        DBG ("rawHttpPost called: " + juce::String (host) + ":" + juce::String (port));
         statusCode = 0;
 
         int fd = ::socket (AF_INET, SOCK_STREAM, 0);
@@ -475,10 +473,8 @@ private:
             buf.append (tmp, (size_t) n);
         ::close (fd);
 
-        DBG ("rawHttpPost: recv loop done, buf.getSize()=" + juce::String ((int) buf.getSize()));
         if (buf.getSize() == 0) return false;
 
-        DBG ("rawHttpPost: constructing juce::String from buf");
         juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
 
         // Status line: "HTTP/1.0 200 OK"
@@ -487,17 +483,13 @@ private:
                              .upToFirstOccurrenceOf (" ", false, false).getIntValue();
 
         int sep = full.indexOf ("\r\n\r\n");
-        DBG ("rawHttpPost: header sep=" + juce::String (sep));
         if (sep < 0) return false;
 
-        DBG ("rawHttpPost: constructing body substring");
         juce::String body = full.substring (sep + 4).trim();
         if (body.isEmpty()) return false;
 
-        DBG ("rawHttpPost: parsing JSON: " + body);
         auto json = juce::JSON::parse (body);
         responseIP = json["engineer_ip"].toString();
-        DBG ("rawHttpPost: engineer_ip=" + responseIP);
         return responseIP.isNotEmpty();
     }
 
@@ -517,7 +509,7 @@ private:
 class MainComponent : public juce::Component
 {
 public:
-    enum class Screen { ROLE_SELECT, ARTIST, ENGINEER };
+    enum class Screen { ROLE_SELECT, ARTIST };
 
     MainComponent();
     ~MainComponent() override;

@@ -17,7 +17,7 @@ def run_watcher():
     observer.join()
 
 
-def run_stream(params=None):
+def run_stream():
     # Reads from transport._stream_queue (transport.py's single input stream)
     # instead of opening a second PyAudio input, which fails on macOS CoreAudio.
     import transport

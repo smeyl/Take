@@ -8,27 +8,9 @@ from flask import jsonify
 import receiver
 import reaper
 from receiver import app, INCOMING_PATH, PORT
-from reaper import BASE
 
-TEMP_FILE = "/tmp/take_incoming.txt"
 RELAY_URL = "http://127.0.0.1:5010"
-INSERT_ID_FILE = "/tmp/take_insert_cmd_id"
 DEST_TRACK_FILE = "/tmp/take_dest_track"
-
-# Fallback for setups predating auto-registration (take_session.lua writes the
-# real ID to INSERT_ID_FILE on every Reaper launch).
-_INSERT_ACTION_FALLBACK = "_RSb5c2380eebd5068bc425e17e9f920644a2f49be8"
-
-
-def _insert_action_id():
-    try:
-        with open(INSERT_ID_FILE) as fh:
-            action = fh.read().strip()
-            if action:
-                return action
-    except OSError:
-        pass
-    return _INSERT_ACTION_FALLBACK
 
 
 def _get_selected_track():
@@ -86,22 +68,18 @@ def _insert_media_flow(filename, force=False):
     except Exception as e:
         print(f"[sync] swap failed ({e}) — falling back to insert")
 
-    # Fallback: insert as a new item on the selected destination track (used
-    # before the first recording of a session, or if take_session.lua is not running)
-    try:
-        track = _get_selected_track()
-        action = _insert_action_id()
-        print(f"[sync] insert via Reaper action {action} (track {track})")
-        with open(TEMP_FILE, "w") as f:
-            f.write(filepath + "\n" + str(track))
-        r = requests.get(f"{BASE}/_/{action}", timeout=5)
-        if not r.ok:
-            print(f"[sync] Reaper web API returned HTTP {r.status_code} — "
-                  f"is the action ID stale? ({INSERT_ID_FILE})")
-        receiver.update_take_status(filename, "done")
-        print(f"[sync] placed {filename} on track {track}")
-    except requests.RequestException as e:
-        print(f"[sync] Reaper unreachable — could not place {filename} ({e})")
+    # Fallback: insert as a new item on the selected destination track at the
+    # edit cursor (used before the first recording of a session). Same file
+    # IPC as every other Reaper command — the web API 404s on this setup.
+    track = _get_selected_track()
+    if not reaper.script_alive():
+        print(f"[sync] take_session.lua is not running — {filename} saved to "
+              f"{INCOMING_PATH}/ but NOT placed in Reaper. Start Reaper "
+              f"(the Take script loads automatically) and use Sync now.")
+        return
+    reaper.insert_media(filepath, track)
+    receiver.update_take_status(filename, "done")
+    print(f"[sync] insert queued for take_session.lua — {filename} on track {track}")
 
 
 @app.route("/takes/<path:filename>/swap", methods=["POST"])
@@ -140,7 +118,6 @@ if __name__ == "__main__":
 
     print("Take — engineer ready")
     print(f"  File receiver : 0.0.0.0:{PORT} → {INCOMING_PATH}/")
-    print(f"  Insert action : {_insert_action_id()}")
 
     try:
         while True:

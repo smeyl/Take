@@ -170,7 +170,7 @@ if __name__ == "__main__":
 
     threads = [
         threading.Thread(target=run_watcher, name="watcher", daemon=True),
-        threading.Thread(target=run_stream, args=(cue_receiver.params,), name="stream", daemon=True),
+        threading.Thread(target=run_stream, name="stream", daemon=True),
         threading.Thread(target=run_backing_player, name="backing-player", daemon=True),
         threading.Thread(target=listen_for_cues, name="cue-receiver", daemon=True),
         threading.Thread(

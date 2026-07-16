@@ -77,32 +77,12 @@ _last_file = None  # basename of the last successful render, shown in the UI
 selected_tracks = []  # empty = all tracks; list of ints = only those tracks
 
 
-def _apply_track_selection():
-    """Mute tracks not in selected_tracks. Returns saved (index, was_muted) pairs."""
-    if not selected_tracks:
-        return []
-    count = reaper.get_track_count()
-    saved = []
-    for i in range(count):
-        was_muted = reaper.get_track_muted(i)
-        saved.append((i, was_muted))
-        if i not in selected_tracks and not was_muted:
-            reaper.set_track_muted(i, True)
-    return saved
-
-
-def _restore_track_selection(saved):
-    for i, was_muted in saved:
-        if i not in selected_tracks and not was_muted:
-            reaper.set_track_muted(i, False)
-
-
 def _do_bounce():
     global _bouncing, _last_result, _last_time, _last_file
-    saved_mutes = []
     try:
-        saved_mutes = _apply_track_selection()
-        reaper.start_bounce()          # take_session.lua renders + signals done
+        # take_session.lua mutes the unselected tracks around the render and
+        # restores them — no web API involved (it 404s on this setup).
+        reaper.start_bounce(selected_tracks)
         rendered = wait_for_bounce()
         if rendered:
             # Artist's file receiver — distinct port so it can never collide
@@ -121,9 +101,8 @@ def _do_bounce():
         print(f"Bounce failed: {e}")
         _last_result = "error"
     finally:
-        # Restore mutes and always clear the flag — a crash or timeout mid-bounce
-        # must never leave tracks muted or lock out future bounces.
-        _restore_track_selection(saved_mutes)
+        # Always clear the flag — a crash or timeout mid-bounce must never
+        # lock out future bounces.
         _last_time = datetime.now().isoformat()
         _bouncing = False
 

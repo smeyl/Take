@@ -389,11 +389,10 @@ def get_markers():
 
 @app.route("/reaper/status", methods=["GET"])
 def reaper_status():
-    try:
-        _requests.get("http://localhost:8080", timeout=2)
-        return jsonify({"reachable": True})
-    except _requests.RequestException:
-        return jsonify({"reachable": False})
+    # "Reachable" = take_session.lua is alive (fresh transport export). The old
+    # check pinged Reaper's web server root, which said OK even though every
+    # web API endpoint 404s — a green dot over a dead control path.
+    return jsonify({"reachable": reaper.script_alive()})
 
 
 def run_discovery_listener():

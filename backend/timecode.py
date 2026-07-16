@@ -2,35 +2,18 @@ import json
 import socket
 import requests
 
+import reaper
+
 PORT = 5005
 state = {"pos": 0.0, "playing": False}
 
 
-def _parse_transport(text):
-    """
-    Reaper GET /GET/TRANSPORT response: newline-separated values.
-    Line 0: playback position in seconds
-    Line 1: play state — 0=stopped, 1=playing, 2=paused, 5=recording
-    """
-    try:
-        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-        pos = float(lines[0])
-        playing = len(lines) > 1 and int(float(lines[1])) in (1, 5)
-        return pos, playing
-    except Exception:
-        return 0.0, False
-
-
 def sender(target_ip, stop_evt):
+    # Transport state comes from take_session.lua's file export — NOT the
+    # Reaper web API, which returns 404 on this setup (see CLAUDE.md).
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     while not stop_evt.is_set():
-        pos, playing = 0.0, False
-        try:
-            r = requests.get("http://localhost:8080/GET/TRANSPORT", timeout=0.1)
-            if r.ok:
-                pos, playing = _parse_transport(r.text)
-        except requests.RequestException:
-            pass
+        pos, playing = reaper.get_transport()
         packet = json.dumps({"pos": round(pos, 3), "playing": playing}).encode()
         try:
             sock.sendto(packet, (target_ip, PORT))

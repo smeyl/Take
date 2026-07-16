@@ -9,14 +9,19 @@
 --       rtz               — return to zero (project start)
 --       swap\n{filepath}\n{track_idx}\n{start_time}
 --                         — replace the streamed item with the lossless file
---       bounce            — render the master mix (entire project) to a unique
+--       insert\n{filepath}\n{track_idx}
+--                         — place a file on a track at the edit cursor (used
+--                           when no swap position is known for a take)
+--       bounce\n{tracks}  — render the master mix (entire project) to a unique
 --                           MP3 in /tmp, then write the output path into
---                           /tmp/take_bounce_done so bounce.py can send it
+--                           /tmp/take_bounce_done so bounce.py can send it.
+--                           {tracks} = comma-separated track indices to include
+--                           (others are muted for the render); empty = all
 --   * exports the track list to /tmp/take_tracks.json whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
---   * registers take_insert_media.lua as an action on startup and writes its
---     command ID to /tmp/take_insert_cmd_id (read by engineer.py) — no manual
---     action registration needed
+--   * exports transport state to /tmp/take_transport.json continuously — this
+--     is also the liveness signal: a fresh mtime means this script is running
+--     (the Reaper web API 404s on this setup, so everything is file-based)
 --
 -- Deliberately minimal: Take never changes track inputs or routing, and only
 -- touches arm state at record time. The engineer owns the Reaper setup.
@@ -25,33 +30,13 @@ local CMD_FILE      = "/tmp/take_reaper_cmd"
 local START_FILE    = "/tmp/take_record_start"
 local TRACKS_FILE   = "/tmp/take_tracks.json"
 local MARKERS_FILE  = "/tmp/take_markers.json"
-local INSERT_ID_FILE = "/tmp/take_insert_cmd_id"
+local TRANSPORT_FILE = "/tmp/take_transport.json"
 local BOUNCE_DONE_FILE = "/tmp/take_bounce_done"  -- written when a render finishes
 
-local last_tracks_json  = nil
-local last_markers_json = nil
+local last_tracks_json    = nil
+local last_markers_json   = nil
+local last_transport_json = nil
 local tick = 0
-
---------------------------------------------------------------------------------
--- Insert action self-registration
-
-local function register_insert_action()
-  local script = reaper.GetResourcePath() .. "/Scripts/take_insert_media.lua"
-  -- Idempotent: re-adding an already-registered script returns its existing ID
-  local cmd_id = reaper.AddRemoveReaScript(true, 0, script, true)
-  if cmd_id and cmd_id ~= 0 then
-    local named = reaper.ReverseNamedCommandLookup(cmd_id)
-    if named then
-      local f = io.open(INSERT_ID_FILE, "w")
-      if f then
-        f:write("_" .. named)  -- web API form: /_/_RS<hash>
-        f:close()
-        return true
-      end
-    end
-  end
-  return false
-end
 
 --------------------------------------------------------------------------------
 -- Exports (only written when content changes)
@@ -91,6 +76,26 @@ local function export_if_changed()
   if mj ~= last_markers_json then
     local f = io.open(MARKERS_FILE, "w")
     if f then f:write(mj) f:close() last_markers_json = mj end
+  end
+end
+
+-- Transport state for timecode.py (which forwards it to the artist over UDP).
+-- Written atomically (tmp + rename) so Python can never read a partial file,
+-- on every change plus at least once a second — the mtime doubles as the
+-- "take_session.lua is alive" heartbeat checked by reaper.script_alive().
+local function export_transport(force)
+  local state   = reaper.GetPlayState()          -- bitmask: 1=play, 2=pause, 4=rec
+  local playing = (state & 1) == 1
+  local pos     = playing and reaper.GetPlayPosition() or reaper.GetCursorPosition()
+  local tj = string.format('{"pos":%.3f,"playing":%s}', pos, playing and "true" or "false")
+  if tj == last_transport_json and not force then return end
+  local tmp = TRANSPORT_FILE .. ".tmp"
+  local f = io.open(tmp, "w")
+  if f then
+    f:write(tj)
+    f:close()
+    os.rename(tmp, TRANSPORT_FILE)
+    last_transport_json = tj
   end
 end
 
@@ -154,8 +159,40 @@ local function handle_swap(filepath, track_idx, start_time)
   reaper.UpdateArrange()
 end
 
-local function handle_bounce()
+local function handle_insert(filepath, track_idx)
+  -- Place a file on a track at the edit cursor — the fallback when no swap
+  -- position is known (first take of a session, or manual re-sync).
+  local track = reaper.GetTrack(0, track_idx)
+  if track then
+    reaper.SetOnlyTrackSelected(track)
+  end
+  reaper.InsertMedia(filepath, 0)
+  reaper.UpdateArrange()
+end
+
+local function handle_bounce(tracks_csv)
   os.remove(BOUNCE_DONE_FILE)  -- clear any prior signal before this render
+  -- Track selection: mute every track not in the list for the duration of the
+  -- render, then restore. Empty list = include all tracks.
+  local selected = {}
+  local any_selected = false
+  for s in string.gmatch(tracks_csv or "", "[^,]+") do
+    local idx = tonumber(s)
+    if idx then
+      selected[idx] = true
+      any_selected = true
+    end
+  end
+  local saved_mutes = {}  -- track_idx -> original B_MUTE, only for tracks we mute
+  if any_selected then
+    for i = 0, reaper.CountTracks(0) - 1 do
+      local tr = reaper.GetTrack(0, i)
+      if not selected[i] and reaper.GetMediaTrackInfo_Value(tr, "B_MUTE") == 0 then
+        saved_mutes[i] = 0
+        reaper.SetMediaTrackInfo_Value(tr, "B_MUTE", 1)
+      end
+    end
+  end
   -- Render to a unique file in /tmp: a fresh name every bounce means Reaper can
   -- never raise its "file already exists" overwrite prompt (nothing watches for
   -- that dialog, so it would wedge the automated flow). Point the render at the
@@ -182,6 +219,13 @@ local function handle_bounce()
   reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", prev_fmt, true)
   reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", prev_src, true)
   reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", prev_bounds, true)
+  -- Unmute the tracks we muted for the selection — leave Reaper as we found it.
+  for i in pairs(saved_mutes) do
+    local tr = reaper.GetTrack(0, i)
+    if tr then
+      reaper.SetMediaTrackInfo_Value(tr, "B_MUTE", 0)
+    end
+  end
   -- Signal completion with the actual output path. bounce.py reads the path
   -- from this file, then verifies + sends it.
   local f = io.open(BOUNCE_DONE_FILE, "w")
@@ -218,23 +262,26 @@ local function poll_commands()
   elseif cmd == "swap" then
     -- line2 = filepath, line3 = track_idx, line4 = start_time
     handle_swap(line2, tonumber(line3) or 0, tonumber(line4) or 0)
+  elseif cmd == "insert" then
+    -- line2 = filepath, line3 = track_idx
+    handle_insert(line2, tonumber(line3) or 0)
   elseif cmd == "bounce" then
-    handle_bounce()
+    -- line2 = comma-separated track indices (empty = all)
+    handle_bounce(line2)
   end
 end
 
 local function main()
   poll_commands()
   tick = tick + 1
+  export_transport(tick % 30 == 0)  -- forced write ~1/s = liveness heartbeat
   if tick % 30 == 0 then  -- roughly once per second
     export_if_changed()
   end
   reaper.defer(main)
 end
 
-local registered = register_insert_action()
 export_if_changed()
-reaper.ShowConsoleMsg("Take: session script running — listening on " .. CMD_FILE
-                      .. (registered and ", insert action registered\n"
-                                      or  ", WARNING: insert action not registered\n"))
+export_transport(true)
+reaper.ShowConsoleMsg("Take: session script running — listening on " .. CMD_FILE .. "\n")
 main()

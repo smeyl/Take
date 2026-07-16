@@ -35,7 +35,7 @@ void MainComponent::showScreen (Screen screen)
         };
         screenComponent.reset (s);
     }
-    else if (screen == Screen::ARTIST)
+    else  // ARTIST
     {
         auto* s = new ArtistScreen();
         s->setEngineerIP (engineerIP, rawCode);
@@ -50,32 +50,11 @@ void MainComponent::showScreen (Screen screen)
         s->onBack = [this] { showScreen (Screen::ROLE_SELECT); };
         screenComponent.reset (s);
     }
-    else
-    {
-        auto* s = new EngineerScreen();
-        s->onBack = [this] { showScreen (Screen::ROLE_SELECT); };
-        screenComponent.reset (s);
-    }
 
     addAndMakeVisible (*screenComponent);
     resized();
 
-    if (screen == Screen::ENGINEER)
-    {
-        setSize (820, 700);
-        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (820, 700);
-    }
-    else if (screen == Screen::ARTIST)
-    {
-        setSize (400, 620);
-        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (400, 620);
-    }
-    else  // ROLE_SELECT
-    {
-        setSize (400, 620);
-        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (400, 620);
-    }
+    setSize (400, 620);
+    if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+        rw->setContentComponentSize (400, 620);
 }

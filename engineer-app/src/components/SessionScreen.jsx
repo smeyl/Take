@@ -143,7 +143,7 @@ export default function SessionScreen({ onStart }) {
 
         <div style={{ fontSize: 10, marginBottom: 8, textAlign: "center", minHeight: 16 }}>
           {rawCode === null && !creating && (
-            <span style={{ color: C.muted }}>Waiting for dev_engineer.sh to start…</span>
+            <span style={{ color: C.muted }}>Waiting for the Take backend to start…</span>
           )}
           {rawCode === "" && (
             <span style={{ color: C.amber }}>Relay unreachable — start relay.py first</span>

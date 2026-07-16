@@ -1,24 +1,21 @@
+import json
 import os
 import time
-import requests
 
-# Requires Reaper web server enabled:
-# Reaper > Preferences > Control/OSC/web > Add > Web browser interface
-BASE = "http://localhost:8080"
-
-# Action IDs — verify or reassign via Reaper: Actions > Show Action List
-ACTION_INSERT_TRACK = 40001  # Track: Insert new track
-ACTION_RECORD       = 1013   # Transport: Record
-ACTION_STOP         = 1016   # Transport: Stop
-
-ACTION_SELECT_LAST_TRACK = 40297  # Track: Select last track
-ACTION_ARM_TRACK         = 9      # Track: Toggle record arm for selected track
-
-# File-based IPC for transport control (web API action endpoints return 404 on this machine).
-# take_session.lua handles these — auto-started with Reaper via __startup.lua (see setup.sh).
+# All Reaper control is file-based IPC with take_session.lua — auto-started
+# with Reaper via __startup.lua (see setup.sh). The Reaper web API returns 404
+# on this setup, so nothing here may depend on HTTP calls to Reaper.
 CMD_FILE   = "/tmp/take_reaper_cmd"
 START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
 BOUNCE_DONE_FILE = "/tmp/take_bounce_done"  # written by Lua when a render finishes
+TRACKS_FILE    = "/tmp/take_tracks.json"     # kept current by take_session.lua
+MARKERS_FILE   = "/tmp/take_markers.json"    # kept current by take_session.lua
+TRANSPORT_FILE = "/tmp/take_transport.json"  # rewritten ≥1/s — doubles as liveness
+
+# take_session.lua force-writes TRANSPORT_FILE every second; a stale mtime
+# means the script (or Reaper) is not running.
+SCRIPT_ALIVE_MAX_AGE = 5.0  # seconds
+
 
 def _write_cmd(lines):
     # Write-then-rename so take_session.lua (polling ~30x/s) can never read a
@@ -32,70 +29,42 @@ def _write_cmd(lines):
         print(f"  ERROR: could not write Reaper command: {e}")
 
 
-def _get(path, timeout=5):
-    url = f"{BASE}{path}"
+def _read_json(path, default):
     try:
-        r = requests.get(url, timeout=timeout)
-        return r.status_code
-    except requests.RequestException:
-        print("  ERROR: Could not connect — is Reaper running with the web server enabled?")
-        return None
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
 
 
-def _get_text(path, timeout=5):
-    url = f"{BASE}{path}"
+def script_alive():
+    """True if take_session.lua is running (its transport export is fresh)."""
     try:
-        r = requests.get(url, timeout=timeout)
-        text = r.text.strip()
-        return text if r.status_code == 200 else None
-    except Exception:
-        return None
+        return time.time() - os.path.getmtime(TRANSPORT_FILE) < SCRIPT_ALIVE_MAX_AGE
+    except OSError:
+        return False
 
 
-MARKERS_FILE = "/tmp/take_markers.json"
+def get_transport():
+    """Current Reaper transport as (position_seconds, playing). Falls back to
+    (0.0, False) when the export is missing — callers treat that as stopped."""
+    data = _read_json(TRANSPORT_FILE, {})
+    try:
+        return float(data.get("pos", 0.0)), bool(data.get("playing", False))
+    except (TypeError, ValueError):
+        return 0.0, False
+
 
 def get_markers():
-    # Kept current automatically by take_session.lua (re-exported on change)
-    import json, os
-    if not os.path.exists(MARKERS_FILE):
-        return []
-    try:
-        with open(MARKERS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_json(MARKERS_FILE, [])
 
-
-TRACKS_FILE = "/tmp/take_tracks.json"
 
 def get_tracks():
-    # Kept current automatically by take_session.lua (re-exported on change)
-    import json, os
-    if not os.path.exists(TRACKS_FILE):
-        return []
-    try:
-        with open(TRACKS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_json(TRACKS_FILE, [])
 
 
 def get_track_count():
     return len(get_tracks())
-
-
-def get_track_muted(index):
-    return _get_text(f"/GET/TRACK/{index}/B_MUTE") == "1"
-
-
-def set_track_muted(index, muted):
-    _get(f"/SET/TRACK/{index}/B_MUTE/{'1' if muted else '0'}")
-
-
-def create_track():
-    status = _get(f"/_/{ACTION_INSERT_TRACK}")
-    _get(f"/_/{ACTION_SELECT_LAST_TRACK}")
-    return status == 200
 
 
 def start_recording(track=0):
@@ -109,14 +78,24 @@ def stop_recording():
     return True
 
 
-def start_bounce():
+def insert_media(filepath, track=0):
+    """Place a file on a track at the edit cursor (fallback when no swap
+    position is known). Handled by take_session.lua."""
+    _write_cmd(["insert", filepath, track])
+    return True
+
+
+def start_bounce(selected_tracks=None):
     """Ask take_session.lua to render the project to a unique MP3 in /tmp.
-    Clears the prior done-signal so the caller detects the new one."""
+    selected_tracks: iterable of track indices to include (all others are
+    muted for the render); None/empty = include everything. Clears the prior
+    done-signal so the caller detects the new one."""
     try:
         os.remove(BOUNCE_DONE_FILE)
     except OSError:
         pass
-    _write_cmd(["bounce"])
+    csv = ",".join(str(int(i)) for i in (selected_tracks or []))
+    _write_cmd(["bounce", csv])
     return True
 
 
@@ -142,13 +121,9 @@ def return_to_zero():
 
 
 if __name__ == "__main__":
-    print(f"Connecting to Reaper at {BASE}\n")
-
-    create_track()
-    time.sleep(0.5)
-
-    start_recording(0)
-    print("Recording for 3 seconds...")
-    time.sleep(3)
-
-    stop_recording()
+    alive = script_alive()
+    pos, playing = get_transport()
+    print(f"take_session.lua : {'running' if alive else 'NOT RUNNING'}")
+    print(f"transport        : {pos:.3f}s {'playing' if playing else 'stopped'}")
+    print(f"tracks           : {get_track_count()}")
+    print(f"markers          : {len(get_markers())}")
