@@ -22,6 +22,9 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [receivedTakes, setReceivedTakes] = useState([]);
   const [latencyMs, setLatencyMs]   = useState(null);
   const [bouncing, setBouncing]     = useState(false);
+  // Last bounce as reported by the bounce server: { file, result } — file is
+  // the real rendered filename (take_session.lua names each render uniquely).
+  const [lastBounce, setLastBounce] = useState({ file: null, result: null });
   const [levels, setLevels]         = useState({ l: -60, r: -60 });
   const [destTracks, setDestTracks] = useState([]);
   const [destTrack, setDestTrack]   = useState(0);
@@ -271,6 +274,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         if (rb.ok) {
           const bd = await rb.json();
           setBouncing(bd.bouncing);
+          setLastBounce({ file: bd.file || null, result: bd.result || null });
         }
       } catch {}
     };
@@ -574,8 +578,15 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               {bouncing ? "⟳ Bouncing..." : "↑ Bounce & send"}
             </div>
             <div className="swap-card">
-              <div style={{ color: C.body, marginBottom: 3 }}>{bouncing ? "Rendering in Reaper…" : "session_BT.mp3"}</div>
-              <div style={{ color: bouncing ? C.amber : C.muted }}>{bouncing ? "In progress" : "Ready to send"}</div>
+              <div style={{ color: C.body, marginBottom: 3 }}>
+                {bouncing ? "Rendering in Reaper…" : (lastBounce.file || "—")}
+              </div>
+              <div style={{ color: bouncing ? C.amber : lastBounce.result === "ok" ? C.green : lastBounce.result === "error" ? C.red : C.muted }}>
+                {bouncing ? "In progress"
+                  : lastBounce.result === "ok" ? "✓ Sent to artist"
+                  : lastBounce.result === "error" ? "Bounce failed"
+                  : "No bounce yet"}
+              </div>
             </div>
             <div style={{ marginTop: "auto" }}>
               <div className="sec-label">Last file swap</div>

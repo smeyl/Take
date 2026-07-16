@@ -115,7 +115,7 @@ Both machines must be reachable on ports 5001–5010 (same LAN or VPN). See [POR
    - keeps track and marker exports current — no manual script runs needed
    - self-registers the insert action — no command-ID copying needed
 
-3. One-time, if you want **Bounce & send**: run **File → Render** once, set the output to `/tmp/take_backing_track.mp3` (MP3, stereo), render, and save the project. The bounce button reuses those render settings.
+**Bounce & send** needs no setup: each bounce renders the master mix of the entire project to a uniquely named MP3 in `/tmp` (so Reaper never shows an overwrite prompt), sends it to the artist, and restores your project's own render settings afterwards.
 
 After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app. Take is minimally invasive in Reaper: it never changes track inputs or routing, and only arms the selected track at the moment recording starts. Set the destination track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.
 

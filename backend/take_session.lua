@@ -9,8 +9,9 @@
 --       rtz               — return to zero (project start)
 --       swap\n{filepath}\n{track_idx}\n{start_time}
 --                         — replace the streamed item with the lossless file
---       bounce            — render with the most recent render settings, then
---                           write /tmp/take_bounce_done so bounce.py can send it
+--       bounce            — render the master mix (entire project) to a unique
+--                           MP3 in /tmp, then write the output path into
+--                           /tmp/take_bounce_done so bounce.py can send it
 --   * exports the track list to /tmp/take_tracks.json whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
 --   * registers take_insert_media.lua as an action on startup and writes its
@@ -155,15 +156,37 @@ end
 
 local function handle_bounce()
   os.remove(BOUNCE_DONE_FILE)  -- clear any prior signal before this render
-  -- Render with the project's most recent render settings, no dialog. This is
-  -- the same action bounce.py used to invoke over the Reaper web API (which
-  -- 404s on this setup); run in-process, Main_OnCommand blocks until the
-  -- render finishes, so the output file is complete once it returns.
+  -- Render to a unique file in /tmp: a fresh name every bounce means Reaper can
+  -- never raise its "file already exists" overwrite prompt (nothing watches for
+  -- that dialog, so it would wedge the automated flow). Point the render at the
+  -- master mix of the entire project as MP3 — don't rely on whatever the
+  -- project's last manual render settings happened to be.
+  local name   = os.date("session_BT_%Y%m%d_%H%M%S")
+  local output = "/tmp/" .. name .. ".mp3"
+  local _, prev_dir = reaper.GetSetProjectInfo_String(0, "RENDER_FILE", "", false)
+  local _, prev_pat = reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", "", false)
+  local _, prev_fmt = reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", "", false)
+  local prev_src    = reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, false)
+  local prev_bounds = reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 0, false)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FILE", "/tmp", true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", name, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", "l3pm", true)  -- MP3 (LAME)
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", 0, true)    -- master mix
+  reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", 1, true)  -- entire project
+  -- Main_OnCommand blocks until the render finishes, so the output file is
+  -- complete once it returns.
   reaper.Main_OnCommand(42230, 0)
-  -- Signal completion. bounce.py waits for this, then verifies + sends the file.
+  -- Restore the project's own render settings — the engineer owns the setup.
+  reaper.GetSetProjectInfo_String(0, "RENDER_FILE", prev_dir, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_PATTERN", prev_pat, true)
+  reaper.GetSetProjectInfo_String(0, "RENDER_FORMAT", prev_fmt, true)
+  reaper.GetSetProjectInfo(0, "RENDER_SETTINGS", prev_src, true)
+  reaper.GetSetProjectInfo(0, "RENDER_BOUNDSFLAG", prev_bounds, true)
+  -- Signal completion with the actual output path. bounce.py reads the path
+  -- from this file, then verifies + sends it.
   local f = io.open(BOUNCE_DONE_FILE, "w")
   if f then
-    f:write("done\n")
+    f:write(output .. "\n")
     f:close()
   end
 end

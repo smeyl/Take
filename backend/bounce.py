@@ -13,10 +13,10 @@ from sender import send_file
 
 TARGET_IP = "127.0.0.1"  # set by start_engineer.py after artist joins
 BOUNCE_PORT = 5006
-# Where Reaper writes the render. Set the project's render output to this path
-# (MP3, stereo) once — see the README Reaper setup. take_session.lua triggers
-# the render via ReaScript (the web API render action 404s on this setup).
-RENDER_OUTPUT = "/tmp/take_backing_track.mp3"
+# take_session.lua renders each bounce to a unique /tmp/session_BT_<ts>.mp3 (so
+# Reaper never raises an overwrite prompt) and reports the path in its done
+# signal. The artist side watches a fixed path, so we send under this name:
+ARTIST_FILENAME = "take_backing_track.mp3"  # = backing_player.BACKING_PATH
 
 POLL_INTERVAL = 0.5  # seconds between checks
 STABLE_READS  = 3    # consecutive identical sizes = file fully written
@@ -26,8 +26,8 @@ TIMEOUT       = 120  # seconds before giving up
 def wait_for_bounce():
     """Wait for take_session.lua to signal the render finished, then confirm the
     output file is present and its size has settled. Bounded by TIMEOUT so a
-    missing Reaper / Take script can never wedge the bounce. Returns True on a
-    complete render, False on timeout or missing output."""
+    missing Reaper / Take script can never wedge the bounce. Returns the
+    rendered file's path on a complete render, None on timeout/missing output."""
     deadline = time.time() + TIMEOUT
 
     # 1) Wait for the Lua completion signal — proof the render action actually
@@ -37,26 +37,33 @@ def wait_for_bounce():
     if not reaper.bounce_signalled():
         print(f"Bounce: no completion signal from take_session.lua within "
               f"{TIMEOUT}s — is Reaper running with the Take script?")
-        return False
+        return None
+
+    # The signal file names the actual render output for this bounce.
+    output = reaper.bounce_output_path()
+    if not output:
+        print("Bounce: done signal contained no output path — is take_session.lua "
+              "up to date? (restart Reaper after updating the Take scripts)")
+        return None
 
     # 2) Confirm the rendered file exists and has stopped growing. The render
     #    action blocks until done, so this normally settles immediately; the
     #    stability check just guards a slow flush.
     last_size, stable = -1, 0
     while time.time() < deadline:
-        if os.path.exists(RENDER_OUTPUT):
-            size = os.path.getsize(RENDER_OUTPUT)
+        if os.path.exists(output):
+            size = os.path.getsize(output)
             if size > 0 and size == last_size:
                 stable += 1
                 if stable >= STABLE_READS:
-                    return True
+                    return output
             else:
                 last_size, stable = size, 0
         time.sleep(POLL_INTERVAL)
 
-    print(f"Bounce: signalled done but {RENDER_OUTPUT} never appeared/settled — "
-          f"check the project's render output path and format in Reaper (README).")
-    return False
+    print(f"Bounce: signalled done but {output} never appeared/settled — "
+          f"check the Reaper console for render errors.")
+    return None
 
 
 bounce_app = Flask("bounce_server")
@@ -66,6 +73,7 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 _bouncing = False
 _last_result = None
 _last_time = None
+_last_file = None  # basename of the last successful render, shown in the UI
 selected_tracks = []  # empty = all tracks; list of ints = only those tracks
 
 
@@ -90,19 +98,23 @@ def _restore_track_selection(saved):
 
 
 def _do_bounce():
-    global _bouncing, _last_result, _last_time
+    global _bouncing, _last_result, _last_time, _last_file
     saved_mutes = []
     try:
-        if os.path.exists(RENDER_OUTPUT):
-            os.remove(RENDER_OUTPUT)
         saved_mutes = _apply_track_selection()
         reaper.start_bounce()          # take_session.lua renders + signals done
-        ok = wait_for_bounce()
-        if ok:
+        rendered = wait_for_bounce()
+        if rendered:
             # Artist's file receiver — distinct port so it can never collide
-            # with the engineer's take receiver in single-machine dev
-            send_file(RENDER_OUTPUT, TARGET_IP, ARTIST_PORT)
-            _last_result = "ok"
+            # with the engineer's take receiver in single-machine dev. Sent
+            # under the fixed name the artist's backing player watches for.
+            if send_file(rendered, TARGET_IP, ARTIST_PORT,
+                         filename=ARTIST_FILENAME):
+                _last_result = "ok"
+                _last_file = os.path.basename(rendered)
+                os.remove(rendered)  # unique per bounce — don't pile up in /tmp
+            else:
+                _last_result = "error"
         else:
             _last_result = "error"
     except Exception as e:
@@ -136,7 +148,8 @@ def bounce_route():
 
 @bounce_app.route("/bounce/status", methods=["GET"])
 def bounce_status():
-    return jsonify({"bouncing": _bouncing, "result": _last_result, "time": _last_time})
+    return jsonify({"bouncing": _bouncing, "result": _last_result,
+                    "time": _last_time, "file": _last_file})
 
 
 def run_bounce_server():
@@ -144,17 +157,16 @@ def run_bounce_server():
 
 
 if __name__ == "__main__":
-    if os.path.exists(RENDER_OUTPUT):
-        os.remove(RENDER_OUTPUT)
-
     print("Bouncing project in Reaper (via take_session.lua)...")
     reaper.start_bounce()
 
-    print(f"Waiting for render → {RENDER_OUTPUT}")
-    if not wait_for_bounce():
+    print("Waiting for render...")
+    rendered = wait_for_bounce()
+    if not rendered:
         print(f"ERROR: Render did not complete within {TIMEOUT}s.")
         raise SystemExit(1)
 
-    print("Render complete. Sending to artist...")
-    send_file(RENDER_OUTPUT, TARGET_IP, ARTIST_PORT)
-    print("Backing track sent to artist")
+    print(f"Render complete ({rendered}). Sending to artist...")
+    if send_file(rendered, TARGET_IP, ARTIST_PORT, filename=ARTIST_FILENAME):
+        os.remove(rendered)
+        print("Backing track sent to artist")

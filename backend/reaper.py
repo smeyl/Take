@@ -110,8 +110,8 @@ def stop_recording():
 
 
 def start_bounce():
-    """Ask take_session.lua to render with the project's most recent render
-    settings. Clears the prior done-signal so the caller detects the new one."""
+    """Ask take_session.lua to render the project to a unique MP3 in /tmp.
+    Clears the prior done-signal so the caller detects the new one."""
     try:
         os.remove(BOUNCE_DONE_FILE)
     except OSError:
@@ -123,6 +123,17 @@ def start_bounce():
 def bounce_signalled():
     """True once take_session.lua has finished the render for start_bounce()."""
     return os.path.exists(BOUNCE_DONE_FILE)
+
+
+def bounce_output_path():
+    """The rendered file's path, as reported by take_session.lua in the
+    done-signal file. None until bounce_signalled() is True."""
+    try:
+        with open(BOUNCE_DONE_FILE) as f:
+            path = f.readline().strip()
+        return path or None
+    except OSError:
+        return None
 
 
 def return_to_zero():

@@ -5,9 +5,12 @@ import requests
 PORT = 5001  # engineer's take receiver (default); artist's receiver is 5009
 
 
-def send_file(filepath, host, port=PORT):
+def send_file(filepath, host, port=PORT, filename=None):
+    # filename overrides the name the receiver saves under (the local file on
+    # disk keeps its own name) — used by bounce.py, whose renders are uniquely
+    # named locally but must land at the artist's fixed backing-track path.
     url = f"http://{host}:{port}/upload"
-    filename = os.path.basename(filepath)
+    filename = filename or os.path.basename(filepath)
     try:
         with open(filepath, "rb") as f:
             response = requests.post(url, files={"file": (filename, f)})

@@ -92,6 +92,9 @@ def run_stream_receiver():
 
     bh_index, bh_name = _find_blackhole_device(audio)
 
+    # The artist's mic goes to BlackHole ONLY — Reaper records/monitors it from
+    # there. Never open the default output here: that would play the mic
+    # directly on the engineer's speakers on top of Reaper's monitoring.
     bh_stream = None
     if bh_index is not None:
         try:
@@ -101,30 +104,21 @@ def run_stream_receiver():
             print(f"Stream receiver: BlackHole → {bh_name} (Reaper input)")
         except Exception as e:
             print(f"Stream receiver: BlackHole open failed ({e})")
-
-    default_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                                output=True, frames_per_buffer=CHUNK)
-    print(f"Stream receiver: default output → speakers/headphones")
-
-    def _write_parallel(data, streams):
-        threads = [threading.Thread(target=s.write, args=(data,)) for s in streams if s]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+    if bh_stream is None:
+        print("Stream receiver: BlackHole not available — artist mic will be "
+              "received but NOT fed to Reaper. Install/enable BlackHole to "
+              "hear the artist.", flush=True)
 
     try:
         while not stop_event.is_set():
             try:
                 # Largest packet: 1 header byte + CHUNK samples of float32
                 data, _ = sock.recvfrom(CHUNK * 4 + 1)
-                pcm = stream_sender.decode_to_int16(data)
-                _write_parallel(pcm, [default_stream, bh_stream])
             except socket.timeout:
                 continue
+            if bh_stream:
+                bh_stream.write(stream_sender.decode_to_int16(data))
     finally:
-        default_stream.stop_stream()
-        default_stream.close()
         if bh_stream:
             bh_stream.stop_stream()
             bh_stream.close()
