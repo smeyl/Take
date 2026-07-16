@@ -85,7 +85,8 @@ end
 -- "take_session.lua is alive" heartbeat checked by reaper.script_alive().
 local function export_transport(force)
   local state   = reaper.GetPlayState()          -- bitmask: 1=play, 2=pause, 4=rec
-  local playing = (state & 1) == 1
+  -- Paused counts as NOT playing — the artist's backing player must pause too.
+  local playing = (state & 1) == 1 and (state & 2) == 0
   local pos     = playing and reaper.GetPlayPosition() or reaper.GetCursorPosition()
   local tj = string.format('{"pos":%.3f,"playing":%s}', pos, playing and "true" or "false")
   if tj == last_transport_json and not force then return end
