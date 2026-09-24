@@ -4,8 +4,11 @@
 -- What it does, continuously:
 --   * polls /tmp/take_reaper_cmd for commands from the Python backend:
 --       record\n{track_idx}
---                         — arm the track, save cursor pos, start recording
---       stop              — stop the transport
+--                         — arm the track, save cursor pos, start recording.
+--                           If Reaper is already recording (the engineer hit
+--                           Record in Reaper and Take followed), only save the
+--                           current position and recording track for the swap.
+--       stop              — stop the transport (if recording)
 --       rtz               — return to zero (project start)
 --       swap\n{filepath}\n{track_idx}\n{start_time}
 --                         — replace the streamed item with the lossless file
@@ -19,8 +22,10 @@
 --                           (others are muted for the render); empty = all
 --   * exports the track list to /tmp/take_tracks.json whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
---   * exports transport state to /tmp/take_transport.json continuously — this
---     is also the liveness signal: a fresh mtime means this script is running
+--   * exports transport state (position, playing, recording) to
+--     /tmp/take_transport.json continuously — record_watcher.py follows the
+--     recording flag, and a fresh mtime is also the liveness signal that this
+--     script is running
 --     (the Reaper web API 404s on this setup, so everything is file-based)
 --
 -- Deliberately minimal: Take never changes track inputs or routing, and only
@@ -37,6 +42,7 @@ local last_tracks_json    = nil
 local last_markers_json   = nil
 local last_transport_json = nil
 local tick = 0
+local take_armed_idx = nil  -- track Take armed itself; nil = arm state is the engineer's
 
 --------------------------------------------------------------------------------
 -- Exports (only written when content changes)
@@ -87,8 +93,10 @@ local function export_transport(force)
   local state   = reaper.GetPlayState()          -- bitmask: 1=play, 2=pause, 4=rec
   -- Paused counts as NOT playing — the artist's backing player must pause too.
   local playing = (state & 1) == 1 and (state & 2) == 0
+  local recording = (state & 4) == 4
   local pos     = playing and reaper.GetPlayPosition() or reaper.GetCursorPosition()
-  local tj = string.format('{"pos":%.3f,"playing":%s}', pos, playing and "true" or "false")
+  local tj = string.format('{"pos":%.3f,"playing":%s,"recording":%s}', pos,
+                           playing and "true" or "false", recording and "true" or "false")
   if tj == last_transport_json and not force then return end
   local tmp = TRANSPORT_FILE .. ".tmp"
   local f = io.open(tmp, "w")
@@ -103,36 +111,63 @@ end
 --------------------------------------------------------------------------------
 -- Transport commands
 
-local function handle_record(track_idx)
-  -- Arm only the target track, only now — inputs and other tracks are
-  -- the engineer's business.
-  local track = reaper.GetTrack(0, track_idx)
-  if track then
-    reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+local function is_recording()
+  return (reaper.GetPlayState() & 4) == 4
+end
+
+local function first_armed_track()
+  for i = 0, reaper.CountTracks(0) - 1 do
+    if reaper.GetMediaTrackInfo_Value(reaper.GetTrack(0, i), "I_RECARM") == 1 then
+      return i
+    end
   end
-  -- Save cursor position + track index so Python can request the swap later
-  local pos = reaper.GetCursorPosition()
+  return nil
+end
+
+-- Save timeline position + track index so Python can request the swap later
+local function write_start(pos, track_idx)
   local f = io.open(START_FILE, "w")
   if f then
     f:write(string.format("%.6f\n%d\n", pos, track_idx))
     f:close()
   end
+end
+
+local function handle_record(track_idx)
+  if is_recording() then
+    -- The engineer started recording from Reaper's own transport and Take is
+    -- only now (after the artist's countdown) starting the lossless capture.
+    -- Save where on the timeline that capture begins, on the track Reaper is
+    -- actually recording, so the swap lands in sync. Arm state and the
+    -- transport are the engineer's — don't touch them.
+    write_start(reaper.GetPlayPosition(), first_armed_track() or track_idx)
+    return
+  end
+  -- Arm only the target track, only now — inputs and other tracks are
+  -- the engineer's business.
+  local track = reaper.GetTrack(0, track_idx)
+  if track then
+    reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 1)
+    take_armed_idx = track_idx
+  end
+  write_start(reaper.GetCursorPosition(), track_idx)
   reaper.Main_OnCommand(1013, 0)  -- Transport: Record
 end
 
 local function handle_stop()
-  reaper.Main_OnCommand(1016, 0)  -- Transport: Stop
-  -- Disarm the track we armed at record time — leave Reaper as we found it.
-  -- Read (don't delete) START_FILE: the upcoming file swap still needs it.
-  local f = io.open(START_FILE, "r")
-  if f then
-    f:read("*l")  -- skip position line
-    local idx = tonumber(f:read("*l") or "") or 0
-    f:close()
-    local track = reaper.GetTrack(0, idx)
+  -- Only stop an active recording: when the engineer stopped Reaper first,
+  -- this arrives afterwards and must not stop playback they've since started.
+  if is_recording() then
+    reaper.Main_OnCommand(1016, 0)  -- Transport: Stop
+  end
+  -- Disarm only a track Take armed itself — leave Reaper as we found it.
+  -- START_FILE stays: the upcoming file swap still needs it.
+  if take_armed_idx then
+    local track = reaper.GetTrack(0, take_armed_idx)
     if track then
       reaper.SetMediaTrackInfo_Value(track, "I_RECARM", 0)
     end
+    take_armed_idx = nil
   end
 end
 
@@ -144,11 +179,15 @@ end
 local function handle_swap(filepath, track_idx, start_time)
   local track = reaper.GetTrack(0, track_idx)
   if not track then return end
-  -- Find the BlackHole-recorded item near start_time and remove it
+  -- Find the BlackHole-recorded item this take belongs to and remove it. The
+  -- lossless capture can start inside that item rather than at its start
+  -- (Reaper-initiated recording rolls through the artist's countdown), so
+  -- match an item that spans start_time, with 2 s of slack before it.
   for i = reaper.GetTrackNumMediaItems(track) - 1, 0, -1 do
     local item     = reaper.GetTrackMediaItem(track, i)
     local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
-    if math.abs(item_pos - start_time) < 2.0 then
+    local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+    if start_time > item_pos - 2.0 and start_time < item_pos + item_len then
       reaper.DeleteTrackMediaItem(track, item)
       break
     end

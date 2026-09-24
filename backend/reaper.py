@@ -55,6 +55,12 @@ def get_transport():
         return 0.0, False
 
 
+def is_recording():
+    """True while Reaper's transport is recording, per take_session.lua's
+    export. False when the export is missing or predates the flag."""
+    return bool(_read_json(TRANSPORT_FILE, {}).get("recording", False))
+
+
 def get_markers():
     return _read_json(MARKERS_FILE, [])
 

@@ -11,6 +11,7 @@ import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
 import ports
 import reaper
+import record_watcher
 import stream_sender
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT
@@ -189,6 +190,9 @@ if __name__ == "__main__":
             ),
             threading.Thread(target=timecode.sender, args=(artist_ip, stop_event),
                              name="timecode", daemon=True),
+            # Record/Stop in Reaper's own transport drives the artist's capture.
+            threading.Thread(target=record_watcher.run, args=(stop_event,),
+                             name="record-watcher", daemon=True),
         ]
         for t in threads:
             t.start()
@@ -198,6 +202,7 @@ if __name__ == "__main__":
         print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
         print(f"  Take script    : {'running in Reaper' if reaper_ok else 'NOT RUNNING — start Reaper (take_session.lua loads automatically)'}")
         print(f"  Timecode       : UDP → {artist_ip}:{timecode.PORT}")
+        print("  Recording      : follows Reaper's Record/Stop")
         print("Press Ctrl+C to stop.\n")
 
         stop_event.wait()
