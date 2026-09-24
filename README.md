@@ -71,11 +71,10 @@ That's it — the artist app (Take Artist.app) is already built and ready to run
 
 ### If you are the engineer
 
-1. Open Reaper and set your destination track's input to BlackHole 2ch
+1. Open Reaper, set your recording track's input to BlackHole 2ch, and arm it
 2. Double-click **Take Engineer.app**
 3. A session code appears — share it with the artist
-4. Select the destination track from the dropdown in the app
-5. Hit **Rec** when ready
+4. Press **Record** in Reaper when ready — the artist gets a 3-2-1 countdown and records locally; press **Stop** in Reaper to end the take
 
 ### If you are the artist
 
@@ -117,7 +116,7 @@ All Reaper control is file-based Lua IPC; Take does not use Reaper's web control
 
 **Bounce & send** needs no setup: each bounce renders the master mix of the entire project to a uniquely named MP3 in `/tmp` (so Reaper never shows an overwrite prompt), sends it to the artist, and restores your project's own render settings afterwards.
 
-After that, a session is: open Reaper, double-click Take Engineer.app, and pick a destination track in the engineer app. Take is minimally invasive in Reaper: it never changes track inputs or routing, and only arms the selected track at the moment recording starts. Set the destination track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.
+After that, a session is: open Reaper, double-click Take Engineer.app, and record with Reaper's own transport. Take follows it — Record in Reaper starts the artist's countdown and lossless capture, Stop ends it, and the lossless file replaces the streamed take on the track Reaper recorded. Take is minimally invasive in Reaper: it never changes track inputs, routing or arm state. Set the recording track's input (e.g. BlackHole for the live artist stream) yourself, once, as part of your project template.
 
 ## Built with
 
