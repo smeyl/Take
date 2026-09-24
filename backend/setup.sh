@@ -50,7 +50,9 @@ fi
 
 # --- Install Python packages ------------------------------------------------
 echo "Installing Take Python dependencies..."
-PACKAGES=(flask flask-cors requests pyaudio watchdog soundfile sounddevice numpy pedalboard)
+# py-ptsl drives Pro Tools (engineer side). 601.1.0 is the newest release that
+# supports this Python 3.9; later ones need Python >= 3.12.
+PACKAGES=(flask flask-cors requests pyaudio watchdog soundfile sounddevice numpy pedalboard "py-ptsl==601.1.0")
 for pkg in "${PACKAGES[@]}"; do
     echo "  → $pkg"
     if ! /usr/bin/python3 -m pip install "$pkg"; then
@@ -61,24 +63,34 @@ for pkg in "${PACKAGES[@]}"; do
     fi
 done
 
-echo "Installing Reaper scripts..."
-SCRIPTS="$HOME/Library/Application Support/REAPER/Scripts"
-mkdir -p "$SCRIPTS"
-cp take_session.lua "$SCRIPTS/"
+# --- Legacy Reaper integration -------------------------------------------------
+# Pro Tools is the active DAW. The Reaper session script is only installed when
+# Reaper itself is — otherwise Reaper's settings folder isn't created at all.
+reaper_installed() {
+    [ -d /Applications/REAPER.app ] || [ -d "$HOME/Applications/REAPER.app" ] ||
+        mdfind "kMDItemCFBundleIdentifier == 'com.cockos.reaper'" 2>/dev/null | grep -q .
+}
 
-# Auto-start the session script with Reaper (idempotent)
-STARTUP="$SCRIPTS/__startup.lua"
-DOFILE='dofile(reaper.GetResourcePath() .. "/Scripts/take_session.lua")'
-if [ ! -f "$STARTUP" ] || ! grep -qF "take_session.lua" "$STARTUP"; then
-    echo "$DOFILE" >> "$STARTUP"
+if reaper_installed; then
+    echo "Reaper found — installing the legacy Take session script..."
+    SCRIPTS="$HOME/Library/Application Support/REAPER/Scripts"
+    mkdir -p "$SCRIPTS"
+    cp take_session.lua "$SCRIPTS/"
+
+    # Auto-start the session script with Reaper (idempotent)
+    STARTUP="$SCRIPTS/__startup.lua"
+    DOFILE='dofile(reaper.GetResourcePath() .. "/Scripts/take_session.lua")'
+    if [ ! -f "$STARTUP" ] || ! grep -qF "take_session.lua" "$STARTUP"; then
+        echo "$DOFILE" >> "$STARTUP"
+    fi
+
+    # Remove scripts superseded by take_session.lua
+    rm -f "$SCRIPTS/take_reaper_poll.lua" \
+          "$SCRIPTS/take_export_tracks.lua" \
+          "$SCRIPTS/take_export_markers.lua" \
+          "$SCRIPTS/take_insert_media.lua"
+else
+    echo "Reaper not installed — skipping the legacy Reaper session script."
 fi
 
-# Remove scripts superseded by take_session.lua
-rm -f "$SCRIPTS/take_reaper_poll.lua" \
-      "$SCRIPTS/take_export_tracks.lua" \
-      "$SCRIPTS/take_export_markers.lua" \
-      "$SCRIPTS/take_insert_media.lua"
-
-echo "Setup complete — zero Reaper configuration needed."
-echo "On every Reaper launch the Take script starts automatically, keeps track"
-echo "and marker exports current, and self-registers the insert action."
+echo "Setup complete."

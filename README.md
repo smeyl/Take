@@ -45,9 +45,9 @@ using the [py-ptsl](https://github.com/iluvcapra/py-ptsl) client.
 - **Pro Tools 2025.6 or later** — Take uses PTSL commands added in 2025.6 (tested with Pro Tools 2026.4.1). PTSL runs automatically while Pro Tools is open; there is nothing to enable.
 - **py-ptsl 601.1.0** — the newest py-ptsl release that supports Python 3.9 (later releases need Python ≥ 3.12)
 - Node.js 18+
-- A Pro Tools **Playback Engine with audio inputs** (Setup ▸ Playback Engine). Pro Tools won't record-enable a track that has no input and output assigned, and Take follows Pro Tools' own recording, so without inputs nothing can be recorded. Tested with *Pro Tools Audio Bridge 16*.
+- A Pro Tools **Playback Engine with audio inputs** (Setup ▸ Playback Engine) that **includes Pro Tools Audio Bridge 2-A** — see [Live stream into Pro Tools](#live-stream-into-pro-tools). Pro Tools won't record-enable a track that has no input and output assigned.
 
-`setup.sh` installs portaudio (via Homebrew) and the Python dependencies. If Homebrew itself is missing, it will tell you and stop — install Homebrew first, then re-run `./setup.sh`.
+`setup.sh` installs portaudio (via Homebrew) and the Python dependencies, including py-ptsl. It installs the legacy Reaper script only if Reaper is installed. If Homebrew itself is missing, it will tell you and stop — install Homebrew first, then re-run `./setup.sh`.
 
 ## Setup
 
@@ -62,11 +62,10 @@ cd Take
 
 ```bash
 cd backend
-./setup.sh                                            # Python dependencies
-/usr/bin/python3 -m pip install --user py-ptsl==601.1.0   # Pro Tools control (not in setup.sh yet)
+./setup.sh           # Python dependencies, including py-ptsl
 
 cd ../engineer-app
-npm install                                           # desktop app dependencies
+npm install          # desktop app dependencies
 ```
 
 ### 3. If you are the artist
@@ -111,8 +110,19 @@ Take only acts when a take arrives, and only on the track that was armed:
 - **No playhead read in PTSL.** Take works out positions from where the transport started plus elapsed time. The swap position is accurate to roughly the watcher's 50 ms polling plus network delay. The timecode that keeps the artist's backing track in sync doesn't follow loops, pre-roll, scrubbing, or seeking while the transport is rolling.
 - **Take doesn't start Pro Tools recording itself** — the engineer presses Record in Pro Tools.
 - **Not yet tested:** pre-roll, loop record, QuickPunch, Shuffle mode, *Link Timeline and Edit Selection* turned off.
-- **Live monitoring stream into Pro Tools:** the engineer backend plays the artist's live mic stream to a **BlackHole** output device. To hear or record that stream in Pro Tools, BlackHole has to be part of Pro Tools' Playback Engine (for example via an aggregate device) and routed to the recording track's input. This path hasn't been tested with Pro Tools yet.
 - **Backing track bounce:** the backend can export the session's mix from Pro Tools as MP3 and send it to the artist (the bounce service on port 5006), but the current engineer app has no button for it.
+
+### Live stream into Pro Tools
+
+While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one.
+
+The device must **not** be Pro Tools' Playback Engine device itself: Pro Tools takes that device over, and audio other apps send to it never arrives (tested with Audio Bridge 16 as the engine — Pro Tools recorded digital silence). Instead, use a Playback Engine that *includes* Audio Bridge 2-A as inputs:
+
+1. Audio MIDI Setup ▸ **+** ▸ **Create Aggregate Device**, with **Pro Tools Audio Bridge 2-A** and your output device (e.g. your speakers or interface)
+2. Pro Tools ▸ Setup ▸ **Playback Engine** → that aggregate device
+3. Pro Tools ▸ Setup ▸ **I/O** ▸ Input: a path on the Audio Bridge 2-A channels, and set the recording track's input to it
+
+Changing the Playback Engine clears record-enable, so re-arm the track afterwards. With this setup, Pro Tools records the artist's live mic on the armed track (tested with Pro Tools 2026.4.1).
 
 ### For development (manual launch)
 

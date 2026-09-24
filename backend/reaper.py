@@ -9,6 +9,7 @@ import os
 import time
 
 NAME = "Reaper"
+STREAM_DEVICE = "BlackHole"  # Reaper's recording track takes its input from BlackHole
 
 CMD_FILE   = "/tmp/take_reaper_cmd"
 START_FILE = "/tmp/take_record_start"  # written by Lua when recording starts
@@ -43,6 +44,10 @@ def _read_json(path, default):
             return json.load(f)
     except (OSError, ValueError):
         return default
+
+
+def stream_device():
+    return STREAM_DEVICE
 
 
 def alive():

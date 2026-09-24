@@ -63,11 +63,17 @@ def get_local_ip():
         return s.getsockname()[0]
 
 
-def _find_blackhole_device(audio):
-    for i in range(audio.get_device_count()):
-        info = audio.get_device_info_by_index(i)
-        if "BlackHole" in info.get("name", "") and info.get("maxOutputChannels", 0) > 0:
-            return i, info["name"]
+def _find_output_device(audio, wanted):
+    """Output device named exactly `wanted`, else the first whose name
+    contains it. Returns (index, name) or (None, None)."""
+    outputs = [(i, audio.get_device_info_by_index(i)) for i in range(audio.get_device_count())]
+    outputs = [(i, d["name"]) for i, d in outputs if d.get("maxOutputChannels", 0) > 0]
+    for i, name in outputs:
+        if name == wanted:
+            return i, name
+    for i, name in outputs:
+        if wanted in name:
+            return i, name
     return None, None
 
 
@@ -83,24 +89,27 @@ def run_stream_receiver():
     sock.settimeout(1.0)
     audio = pyaudio.PyAudio()
 
-    bh_index, bh_name = _find_blackhole_device(audio)
+    wanted = daw.stream_device()
+    dev_index, dev_name = _find_output_device(audio, wanted)
 
-    # The artist's mic goes to BlackHole ONLY — Reaper records/monitors it from
-    # there. Never open the default output here: that would play the mic
-    # directly on the engineer's speakers on top of Reaper's monitoring.
-    bh_stream = None
-    if bh_index is not None:
+    # The artist's mic goes to the DAW's virtual input device ONLY — the DAW
+    # records/monitors it from there. Never open the default output here: that
+    # would play the mic directly on the engineer's speakers on top of the
+    # DAW's monitoring.
+    dev_stream = None
+    if dev_index is not None:
         try:
-            bh_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                                   output=True, output_device_index=bh_index,
-                                   frames_per_buffer=CHUNK)
-            print(f"Stream receiver: BlackHole → {bh_name} (Reaper input)")
+            dev_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                                    output=True, output_device_index=dev_index,
+                                    frames_per_buffer=CHUNK)
+            print(f"Stream receiver: artist mic → {dev_name} ({daw.NAME} input)")
         except Exception as e:
-            print(f"Stream receiver: BlackHole open failed ({e})")
-    if bh_stream is None:
-        print("Stream receiver: BlackHole not available — artist mic will be "
-              "received but NOT fed to Reaper. Install/enable BlackHole to "
-              "hear the artist.", flush=True)
+            print(f"Stream receiver: opening {dev_name} failed ({e})")
+    if dev_stream is None:
+        print(f"Stream receiver: no output device matching '{wanted}' — artist "
+              f"mic will be received but NOT fed to {daw.NAME}. Set "
+              f"TAKE_STREAM_DEVICE to the virtual device {daw.NAME} records "
+              f"the artist from.", flush=True)
 
     try:
         while not stop_event.is_set():
@@ -109,12 +118,12 @@ def run_stream_receiver():
                 data, _ = sock.recvfrom(CHUNK * 4 + 1)
             except socket.timeout:
                 continue
-            if bh_stream:
-                bh_stream.write(stream_sender.decode_to_int16(data))
+            if dev_stream:
+                dev_stream.write(stream_sender.decode_to_int16(data))
     finally:
-        if bh_stream:
-            bh_stream.stop_stream()
-            bh_stream.close()
+        if dev_stream:
+            dev_stream.stop_stream()
+            dev_stream.close()
         audio.terminate()
         sock.close()
 

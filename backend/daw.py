@@ -18,6 +18,13 @@ def alive():
     return _impl.alive()
 
 
+def stream_device():
+    """Name of the virtual audio output device the artist's live mic stream is
+    played into, so the DAW can monitor and record it (matched exactly, else
+    as a substring)."""
+    return _impl.stream_device()
+
+
 # ── Transport and session state (read) ────────────────────────────────────────
 
 def get_transport():

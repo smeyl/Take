@@ -38,6 +38,14 @@ CAPTURE_FILE = "/tmp/take_pt_capture.json"  # where the artist's capture began (
 STALE_AFTER  = 3600   # seconds — older record/capture info is from a dead session
 ALIVE_CACHE  = 1.0    # seconds — record_watcher asks alive() every 50 ms
 STATE_CACHE  = 0.03   # seconds — timecode and record_watcher share transport reads
+# Where the artist's live stream is played so Pro Tools can record it. PTSL
+# can't report the Playback Engine or track inputs, so this is configured.
+# It must NOT be Pro Tools' Playback Engine device itself: Pro Tools takes that
+# device over and audio other apps send to it never arrives (verified with
+# Audio Bridge 16). Audio Bridge 2-A passes other apps' audio through to its
+# inputs; Pro Tools records it when its Playback Engine includes 2-A (e.g. an
+# aggregate device).
+STREAM_DEVICE = os.environ.get("TAKE_STREAM_DEVICE", "Pro Tools Audio Bridge 2-A")
 
 RECORDING_STATES = {"TS_TransportRecording", "TS_TransportRecordingHalfSpeed"}
 PLAYING_STATES   = RECORDING_STATES | {"TS_TransportPlaying", "TS_TransportPlayingHalfSpeed"}
@@ -118,6 +126,10 @@ def _read_fresh_json(path):
 
 
 # ── Liveness ──────────────────────────────────────────────────────────────────
+
+def stream_device():
+    return STREAM_DEVICE
+
 
 _alive = {"t": 0.0, "value": False}
 
