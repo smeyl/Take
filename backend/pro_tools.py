@@ -290,17 +290,28 @@ def _track_clips(e, track_name):
 
 
 def _import(e, filepath):
-    """Import into the clip list, converting to the session's sample rate and
-    format (the artist records 44.1 kHz; CopyAudio refuses a rate mismatch).
-    Returns the new clip ids."""
-    imp = CId_ImportAudioToClipList(file_list=[filepath], audio_operations=pt.ConvertAudio)
-    e.client.run(imp)
-    fails = [f"{f.file_path}: {f.failure_message}" for f in imp.response.failure_list]
-    ids = [c for entry in imp.response.file_list
-           for f in entry.destination_file_list for c in f.clip_id_list]
-    if not ids:
-        raise RuntimeError(f"import produced no clip ({'; '.join(fails) or 'no reason given'})")
-    return ids
+    """Import into the clip list and return the new clip ids. Pro Tools only
+    accepts CopyAudio for a file already in the session's format and only
+    ConvertAudio for one that isn't (the artist records 44.1 kHz), answering
+    the wrong one with "No audio files were imported" — so try both. That same
+    error also came back intermittently for files that import fine moments
+    later, so the pair is tried twice, half a second apart."""
+    errors = []
+    for attempt, operation in enumerate((pt.CopyAudio, pt.ConvertAudio) * 2):
+        if attempt == 2:
+            time.sleep(0.5)
+        imp = CId_ImportAudioToClipList(file_list=[filepath], audio_operations=operation)
+        try:
+            e.client.run(imp)
+        except CommandError as x:
+            errors.append(str(x).splitlines()[0])
+            continue
+        ids = [c for entry in imp.response.file_list
+               for f in entry.destination_file_list for c in f.clip_id_list]
+        if ids:
+            return ids
+        errors += [f"{f.file_path}: {f.failure_message}" for f in imp.response.failure_list]
+    raise RuntimeError(f"import produced no clip ({'; '.join(errors) or 'no reason given'})")
 
 
 def _spot(e, ids, track_name, position):
@@ -402,9 +413,10 @@ _bounce = {"done": False, "path": None}
 
 
 def start_bounce(selected_tracks=None):
-    """Export the main output mix as 24-bit WAV in /tmp, in the background.
-    (MP3 export fails through PTSL on Pro Tools 2026.4 — "Failed to procede
-    with bounce" plus an error dialog — so it's WAV.) Tracks not
+    """Export the main output mix as MP3 (256 kbps CBR) in /tmp, in the
+    background. The MP3 encoding options must be passed explicitly: without
+    them Pro Tools opens its MP3 settings dialog and the export waits on it
+    (then fails with "Failed to procede with bounce"). Tracks not
     in selected_tracks (0-based indices) are muted for the export and
     restored afterwards, as take_session.lua does for Reaper."""
     _bounce.update(done=False, path=None)
@@ -435,16 +447,15 @@ def _do_bounce(selected_tracks):
         e.client.run(src)
         if not src.response or not src.response.source_list:
             raise RuntimeError("no output to bounce from")
-        rate = {44100: pt.SR_44100, 48000: pt.SR_48000, 88200: pt.SR_88200,
-                96000: pt.SR_96000, 176400: pt.SR_176400, 192000: pt.SR_192000}.get(_sample_rate(e), pt.SR_48000)
         e.client.run(ops.CId_ExportMix(
-            file_name=name, file_type=pt.EMFType_WAV,
+            file_name=name, file_type=pt.EMFType_MP3,
             mix_source_list=[pt.EM_SourceInfo(source_type=pt.EMSType_Output,
                                               name=src.response.source_list[0])],
             audio_info=pt.EM_AudioInfo(export_format=pt.EF_Interleaved,
-                                       delivery_format=pt.EM_DF_SingleFile,
-                                       compression_type=pt.CT_PCM, bit_depth=pt.Bit24,
-                                       sample_rate=rate),
+                                       delivery_format=pt.EM_DF_SingleFile),
+            audio_encoding_options=pt.AudioEncodingOptions(
+                encoding_options_mp3=pt.MP3EncodingOptions(
+                    bit_rate=pt.MP3EOCBRate_256kbps, quality=pt.MP3EOQuality_Highest)),
             # Real path with a trailing slash (/tmp is a symlink).
             location_info=pt.EM_LocationInfo(file_destination=pt.EM_FD_Directory,
                                              directory=os.path.realpath("/tmp") + "/",
