@@ -35,7 +35,9 @@ button:disabled{cursor:default}
 
 .conn-block{padding:14px 20px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid #1c1c1f}
 .conn-row{display:flex;align-items:center;justify-content:space-between}
+.conn-left{display:flex;align-items:baseline;gap:8px;min-width:0}
 .conn-name{font-size:12.5px;color:#c4c4c8}
+.conn-armed{font-size:10.5px;color:#6b6b70;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .conn-right{display:flex;align-items:center;gap:10px}
 .conn-state{display:flex;align-items:center;gap:6px}
 .conn-dot{width:7px;height:7px;border-radius:50%}

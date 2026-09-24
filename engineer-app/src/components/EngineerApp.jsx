@@ -217,7 +217,8 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
   }, [sessionCode]);
 
-  // Reaper track list (kept current by take_session.lua) — used to name takes.
+  // Reaper track list with arm state (kept current by take_session.lua) — used
+  // for the armed-track readout and to name takes.
   useEffect(() => {
     const pollTracks = () => {
       fetch(`${RELAY}/tracks`)
@@ -231,10 +232,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   }, []);
 
   // ── Derived state ────────────────────────────────────────────────────────────
-  // take_session.lua records onto the relay's selected track. Nothing in the
-  // UI changes that selection any more, so it stays at the relay's default,
-  // track index 0. Names are display-only; files keep their T<n>_ names.
-  const recordTrackName = tracks.find(t => t.index === 0)?.name || null;
+  // Reaper records onto whichever track the engineer armed, and the swap
+  // follows the first armed one (take_session.lua), so name takes after it.
+  // Names are display-only; files keep their T<n>_ names.
+  const armedTracks = tracks.filter(t => t.armed);
+  const recordTrackName = armedTracks[0]?.name || null;
   const perTrackCount = {};
   const takes = Array.from({ length: takeCount }, (_, i) => {
     const n = i + 1;
@@ -352,7 +354,16 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       <div className="conn-block">
         {connRows.map(([key, label, [on, status], check, accent]) => (
           <div key={key} className="conn-row">
-            <span className="conn-name">{label}</span>
+            <div className="conn-left">
+              <span className="conn-name">{label}</span>
+              {key === "daw" && dots.reaper && (
+                <span className="conn-armed" title="Track armed in Reaper — takes record here">
+                  {armedTracks.length === 0
+                    ? "no track armed"
+                    : armedTracks[0].name + (armedTracks.length > 1 ? ` +${armedTracks.length - 1}` : "")}
+                </span>
+              )}
+            </div>
             <div className="conn-right">
               <div className="conn-state">
                 <div className="conn-dot" style={{ background: on ? accent : "#4d4d52" }} />

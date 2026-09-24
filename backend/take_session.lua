@@ -20,7 +20,8 @@
 --                           /tmp/take_bounce_done so bounce.py can send it.
 --                           {tracks} = comma-separated track indices to include
 --                           (others are muted for the render); empty = all
---   * exports the track list to /tmp/take_tracks.json whenever it changes
+--   * exports the track list (index, name, armed) to /tmp/take_tracks.json
+--     whenever it changes
 --   * exports markers to /tmp/take_markers.json whenever they change
 --   * exports transport state (position, playing, recording) to
 --     /tmp/take_transport.json continuously — record_watcher.py follows the
@@ -53,7 +54,9 @@ local function build_tracks_json()
     local tr = reaper.GetTrack(0, i)
     local _, name = reaper.GetTrackName(tr, "", 256)
     name = name:gsub('\\', '\\\\'):gsub('"', '\\"')
-    parts[#parts + 1] = string.format('{"index":%d,"name":"%s"}', i, name)
+    local armed = reaper.GetMediaTrackInfo_Value(tr, "I_RECARM") == 1
+    parts[#parts + 1] = string.format('{"index":%d,"name":"%s","armed":%s}', i, name,
+                                      armed and "true" or "false")
   end
   return "[" .. table.concat(parts, ",") .. "]"
 end
