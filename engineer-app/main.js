@@ -27,7 +27,7 @@ function createWindow() {
     height: 420,
     backgroundColor: '#0a0a0b',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 12 },
+    trafficLightPosition: { x: 16, y: 15 },  // centred in the 44px header
     webPreferences,
   })
 
@@ -48,14 +48,17 @@ function createWindow() {
 function openCuePopout() {
   if (cueWin) { cueWin.focus(); return }
   cueWin = new BrowserWindow({
-    width: 300,
-    height: 380,  // 2-column knob grid (3 rows) plus caption and pinned note
+    // cue-mix-popout.html says 280x380, but its own content (reference spacing
+    // and 50px knobs) measures 428px tall with the pinned footer — at 380 the
+    // footer and last row of values are clipped. Width is the reference's.
+    width: 280,
+    height: 428,
     resizable: false,
     fullscreenable: false,
     alwaysOnTop: true,  // pinned by default — stays above Reaper / Pro Tools
     backgroundColor: '#0a0a0b',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 10, y: 10 },
+    trafficLightPosition: { x: 10, y: 11 },  // centred in the 36px header
     webPreferences,
   })
   cueWin.setAlwaysOnTop(true, 'floating')

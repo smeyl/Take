@@ -18,13 +18,19 @@ const KNOBS = [
   ["Cue vol", "vol",    "#e8e8ea"],
 ];
 
-// The six cue knobs in a grid (3 columns embedded, 2 in the popout). Rendered embedded in the main window
-// or on its own in the detached cue window — the caller owns the state.
-export default function CueMix({ cue, onChange }) {
+// The six cue knobs. "embedded" = main window (3 columns, labels only);
+// "popout" = detached window (2 columns, larger knobs with values).
+// The caller owns the state.
+export default function CueMix({ cue, onChange, variant = "embedded" }) {
+  const popout = variant === "popout";
   return (
-    <div className="cue-grid">
+    <div className={popout ? "cue-grid cue-grid-pop" : "cue-grid"}>
       {KNOBS.map(([label, k, color]) => (
-        <Knob key={k} label={label} value={cue[k]} color={color} onChange={v => onChange(k, v)} />
+        <Knob
+          key={k} label={label} value={cue[k]} color={color}
+          size={popout ? 46 : 42} showValue={popout}
+          onChange={v => onChange(k, v)}
+        />
       ))}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
-export default function Knob({ label, value, color, onChange }) {
+// size 42 = main window, 46 = cue mix popout (design reference values).
+export default function Knob({ label, value, color, onChange, size = 42, showValue = false }) {
   const angle = -135 + (value / 100) * 270;
   const isDragging = useRef(false);
   const startY = useRef(0);
@@ -14,13 +15,17 @@ export default function Knob({ label, value, color, onChange }) {
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [onChange]);
 
+  const large = size >= 46;
   return (
-    <div className="knob-wrap">
-      <div className="knob" style={{ borderColor: color }} onMouseDown={onDown}>
-        <div className="knob-tick" style={{ transform: `rotate(${angle}deg)`, background: color }} />
+    <div className={`knob-wrap ${large ? "lg" : ""}`}>
+      <div className="knob" style={{ width: size, height: size, borderColor: color }} onMouseDown={onDown}>
+        <div
+          className="knob-tick"
+          style={{ top: large ? 6 : 5, height: large ? 14 : 13, background: color, transform: `translateX(-50%) rotate(${angle}deg)` }}
+        />
       </div>
-      <div className="knob-lbl">{label}</div>
-      <div className="knob-val" style={{ color }}>{value}%</div>
+      <span className="knob-lbl">{label}</span>
+      {showValue && <span className="knob-val">{value}</span>}
     </div>
   );
 }

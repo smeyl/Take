@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import CueMix, { sendCue } from "./CueMix";
+import { StarIcon } from "./icons";
 
 const DEFAULT_CUE = { rev: 0, revMix: 0, del: 0, delMix: 0, comp: 0, vol: 100 };
 
@@ -29,19 +30,25 @@ export default function CuePopout() {
   return (
     <div className="cue-pop">
       <div className="cue-pop-hdr" style={{ WebkitAppRegion: "drag" }}>
-        <div className="cue-pop-title">Cue Mix</div>
-        <div
-          className={`pill ${pinned ? "on" : ""}`}
+        <span className="cue-pop-title">Cue Mix</span>
+        <button
+          className={`pin-btn ${pinned ? "on" : ""}`}
           style={{ WebkitAppRegion: "no-drag" }}
-          title="Keep this window above other apps"
+          aria-label="Pin on top so Reaper can't cover it"
+          aria-pressed={pinned}
           onClick={togglePinned}
-        >Pinned</div>
+        >
+          <StarIcon color={pinned ? "#2dd4bf" : "#8a8a90"} />
+          Pinned
+        </button>
       </div>
-      <div className="cue-pop-body">
-        <div className="cue-pop-caption">→ sending to <span>artist</span></div>
-        <CueMix cue={cue} onChange={updateCue} />
-        {pinned && <div className="cue-pop-foot">Pinned — stays above Reaper</div>}
-      </div>
+      <div className="cue-pop-caption">→ sending to <span>artist</span></div>
+      <CueMix cue={cue} onChange={updateCue} variant="popout" />
+      {pinned && (
+        <div className="cue-pop-foot">
+          <p>Pinned — stays above Reaper</p>
+        </div>
+      )}
     </div>
   );
 }

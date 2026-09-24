@@ -155,8 +155,9 @@ export default function SessionScreen({ onStart }) {
           style={{ width: "100%", opacity: rawCode ? 1 : 0.4 }}
           disabled={!rawCode}
           onClick={() => {
-            window.resizeTo(720, 860);
-            window.moveTo(screen.width / 2 - 360, screen.height / 2 - 430);
+            // Design reference: main-window.html is 380x640.
+            window.resizeTo(380, 640);
+            window.moveTo(screen.width / 2 - 190, screen.height / 2 - 320);
             onStart(rawCode);
           }}
         >
