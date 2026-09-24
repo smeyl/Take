@@ -14,7 +14,7 @@ SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 TRACKS_FILE = "/tmp/take_tracks.json"
 
 on_file_received = None  # optional callback(filename, size) set by the host app
-sync_format = "WAV24"    # "WAV24" | "WAV32f" | "FLAC"
+sync_format = "WAV24"    # "FLAC" | "WAV24" | "WAV32f"  (compressed → raw)
 _received_takes = []
 _takes_lock = threading.Lock()
 
@@ -79,7 +79,7 @@ def set_sync_format():
     global sync_format
     data = request.get_json(silent=True) or {}
     fmt = data.get("format", "WAV24")
-    if fmt not in ("WAV24", "WAV32f", "FLAC"):
+    if fmt not in ("FLAC", "WAV24", "WAV32f"):
         return jsonify({"error": "invalid format"}), 400
     sync_format = fmt
     try:
