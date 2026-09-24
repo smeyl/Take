@@ -202,7 +202,7 @@ if __name__ == "__main__":
         print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
         print(f"  Take script    : {'running in ' + daw.NAME if daw_ok else 'NOT RUNNING — start ' + daw.NAME + ' (its Take script loads automatically)'}")
         print(f"  Timecode       : UDP → {artist_ip}:{timecode.PORT}")
-        print("  Recording      : follows Reaper's Record/Stop")
+        print(f"  Recording      : follows {daw.NAME}'s Record/Stop")
         print("Press Ctrl+C to stop.\n")
 
         stop_event.wait()

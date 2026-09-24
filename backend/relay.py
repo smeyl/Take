@@ -392,7 +392,7 @@ def reaper_status():
     # "Reachable" = take_session.lua is alive (fresh transport export). The old
     # check pinged Reaper's web server root, which said OK even though every
     # web API endpoint 404s — a green dot over a dead control path.
-    return jsonify({"reachable": daw.alive()})
+    return jsonify({"reachable": daw.alive(), "name": daw.NAME})
 
 
 def run_discovery_listener():

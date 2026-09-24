@@ -25,6 +25,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [recording, setRecording]   = useState(false);
   const [takeCount, setTakeCount]   = useState(0);
   const [dots, setDots]             = useState({ artist: false, reaper: false });
+  const [dawName, setDawName]       = useState("DAW");  // from the relay: "Pro Tools"
   // "main" | "settings" — Settings swaps the window content in place.
   const [view, setView]             = useState("main");
   // True while the cue knobs live in their own detached window.
@@ -165,6 +166,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       if (rr.ok) {
         const rd = await rr.json();
         setDots(d => ({ ...d, reaper: Boolean(rd.reachable) }));
+        if (rd.name) setDawName(rd.name);
       }
     } catch {
       setDots(d => ({ ...d, reaper: false }));
@@ -217,7 +219,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
   }, [sessionCode]);
 
-  // Reaper track list with arm state (kept current by take_session.lua) — used
+  // DAW track list with arm state — used
   // for the armed-track readout and to name takes.
   useEffect(() => {
     const pollTracks = () => {
@@ -232,8 +234,8 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   }, []);
 
   // ── Derived state ────────────────────────────────────────────────────────────
-  // Reaper records onto whichever track the engineer armed, and the swap
-  // follows the first armed one (take_session.lua), so name takes after it.
+  // The DAW records onto whichever track the engineer armed, and the swap
+  // follows the first armed one, so name takes after it.
   // Names are display-only; files keep their T<n>_ names.
   const armedTracks = tracks.filter(t => t.armed);
   const recordTrackName = armedTracks[0]?.name || null;
@@ -268,10 +270,9 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const dawStatus = !dots.reaper ? [false, "Not running"]
     : recording ? [true, "Recording"]
     : [true, "Connected"];
-  // The DAW row reports the Reaper take_session.lua liveness check, so it's
-  // labelled "Reaper" until a real Pro Tools integration replaces that check.
+  // The DAW row is labelled with the backend's active DAW (daw.NAME).
   const connRows = [
-    ["daw",    "Reaper", dawStatus,    checkDaw,    "#2dd4bf"],
+    ["daw",    dawName,  dawStatus,    checkDaw,    "#2dd4bf"],
     ["artist", "Artist", artistStatus, checkArtist, "#4f8fff"],
   ];
 
@@ -357,7 +358,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             <div className="conn-left">
               <span className="conn-name">{label}</span>
               {key === "daw" && dots.reaper && (
-                <span className="conn-armed" title="Track armed in Reaper — takes record here">
+                <span className="conn-armed" title={`Track armed in ${dawName} — takes record here`}>
                   {armedTracks.length === 0
                     ? "no track armed"
                     : armedTracks[0].name + (armedTracks.length > 1 ? ` +${armedTracks.length - 1}` : "")}
@@ -423,7 +424,7 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                   ? <button
                       className="take-status take-sync"
                       style={{ color: st.color }}
-                      title="Place this take on the Reaper timeline"
+                      title={`Place this take on the ${dawName} timeline`}
                       onClick={() => handleManualSync(t.file)}
                     >SYNC NOW</button>
                   : <span className="take-status" style={{ color: st.color }}>{st.label || t.ext}</span>}

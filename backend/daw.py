@@ -1,20 +1,20 @@
 """What Take needs from a DAW — the one module the rest of the backend imports
 instead of reaching into a specific DAW integration.
 
-Every function here delegates to the active implementation module. Reaper
-(reaper.py, driving take_session.lua) is the only one today; another DAW
-becomes a sibling module exposing the same functions, selected below.
+Every function here delegates to the active implementation module: Pro Tools
+(pro_tools.py, via PTSL). reaper.py (take_session.lua) is the legacy
+implementation of the same functions, kept for reference.
 """
-import reaper as _impl
+import pro_tools as _impl
 
-NAME = _impl.NAME  # shown in logs, e.g. "running in Reaper"
+NAME = _impl.NAME  # shown in logs and the engineer app, e.g. "Pro Tools"
 
 
 # ── Liveness ──────────────────────────────────────────────────────────────────
 
 def alive():
-    """True if the DAW's Take-side companion (Reaper: take_session.lua) is
-    running and reporting, i.e. the DAW can be read and controlled."""
+    """True if the DAW can be read and controlled right now (Pro Tools: PTSL
+    answers and a session is open; Reaper: take_session.lua is reporting)."""
     return _impl.alive()
 
 
@@ -47,9 +47,10 @@ def get_markers():
 
 def start_recording(track=0):
     """Sent when the artist's lossless capture actually begins (after the
-    countdown). If the DAW isn't recording yet, arm `track` and start; if it
-    already is (the engineer pressed Record in the DAW), just note where the
-    capture begins so place_take() can line the file up."""
+    countdown). If the DAW is recording (the engineer pressed Record in the
+    DAW), note where the capture begins so place_take() can line the file up.
+    If it isn't, an implementation may start it (Reaper arms `track` and
+    records) or decline (Pro Tools); returns False when it didn't act."""
     return _impl.start_recording(track)
 
 
