@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import threading
@@ -6,12 +5,13 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+import daw
+
 # Data lives at the repo root (sibling of this backend/ folder), not inside it.
 INCOMING_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "incoming")
 PORT = 5001         # engineer's receiver: takes uploaded by the artist
 ARTIST_PORT = 5009  # artist's receiver: backing track bounced by the engineer
 SYNC_FORMAT_FILE = "/tmp/take_sync_format"
-TRACKS_FILE = "/tmp/take_tracks.json"
 
 on_file_received = None  # optional callback(filename, size) set by the host app
 sync_format = "WAV24"    # "FLAC" | "WAV24" | "WAV32f"  (compressed → raw)
@@ -66,12 +66,8 @@ def get_takes():
 
 @app.route("/tracks", methods=["GET"])
 def get_tracks():
-    """Reaper track list, kept current by take_session.lua."""
-    try:
-        with open(TRACKS_FILE) as fh:
-            return jsonify(json.load(fh))
-    except (OSError, ValueError):
-        return jsonify([])
+    """The DAW's track list (index, name, armed)."""
+    return jsonify(daw.get_tracks())
 
 
 @app.route("/sync-format", methods=["POST"])

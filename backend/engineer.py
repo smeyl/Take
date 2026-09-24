@@ -1,12 +1,11 @@
 import os
 import logging
 import threading
-import time
 import requests
 from flask import jsonify
 
+import daw
 import receiver
-import reaper
 from receiver import app, INCOMING_PATH, PORT
 
 RELAY_URL = "http://127.0.0.1:5010"
@@ -30,56 +29,18 @@ def _is_auto_sync_enabled():
 
 def _insert_media_flow(filename, force=False):
     filepath = os.path.join(INCOMING_PATH, filename)
-    print(f"[sync] {filename}: placing in Reaper (force={force})")
+    print(f"[sync] {filename}: placing in {daw.NAME} (force={force})")
 
     if not force and not _is_auto_sync_enabled():
         take_label = filename.split("_")[0] if "_" in filename else filename
         print(f"[sync] auto-sync disabled — skipping swap for {take_label}")
         return
 
-    # Try file swap: replace the BlackHole-recorded stream item with the lossless file.
-    # Requires take_session.lua running in Reaper and a prior recording in this session.
-    try:
-        # Swap info left over from a crashed/killed session must not place a
-        # new take at an old position — treat anything older than an hour as gone.
-        age = time.time() - os.path.getmtime(reaper.START_FILE)
-        if age > 3600:
-            os.remove(reaper.START_FILE)
-            print(f"[sync] discarding stale swap info ({age:.0f}s old) — "
-                  f"falling back to insert")
-            raise FileNotFoundError(reaper.START_FILE)
-        with open(reaper.START_FILE) as f:
-            lines = f.read().strip().split("\n")
-        start_time = float(lines[0])
-        track_idx  = int(lines[1]) if len(lines) > 1 else 0
-        print(f"[sync] swap info: track {track_idx}, position {start_time:.3f}s "
-              f"(from {reaper.START_FILE})")
-        # Atomic write via reaper._write_cmd — never a partial read in Lua
-        reaper._write_cmd(["swap", filepath, track_idx, f"{start_time:.6f}"])
-        # Consume the start info so a later, unrelated file can't swap onto
-        # this take's position — it falls through to a plain insert instead.
-        os.remove(reaper.START_FILE)
-        receiver.update_take_status(filename, "done")
-        print(f"[sync] swap queued for take_session.lua — {filename}")
+    result = daw.place_take(filepath, _get_selected_track())
+    if result == "not_running":
+        print(f"[sync] {filename} saved to {INCOMING_PATH}/ but not placed in {daw.NAME}")
         return
-    except FileNotFoundError:
-        print(f"[sync] no swap info ({reaper.START_FILE} missing — no recording "
-              f"this session, or already consumed) — falling back to insert")
-    except Exception as e:
-        print(f"[sync] swap failed ({e}) — falling back to insert")
-
-    # Fallback: insert as a new item on the selected destination track at the
-    # edit cursor (used before the first recording of a session). Same file
-    # IPC as every other Reaper command — the web API 404s on this setup.
-    track = _get_selected_track()
-    if not reaper.script_alive():
-        print(f"[sync] take_session.lua is not running — {filename} saved to "
-              f"{INCOMING_PATH}/ but NOT placed in Reaper. Start Reaper "
-              f"(the Take script loads automatically) and use Sync now.")
-        return
-    reaper.insert_media(filepath, track)
     receiver.update_take_status(filename, "done")
-    print(f"[sync] insert queued for take_session.lua — {filename} on track {track}")
 
 
 @app.route("/takes/<path:filename>/swap", methods=["POST"])

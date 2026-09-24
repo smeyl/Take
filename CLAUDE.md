@@ -11,28 +11,35 @@ collaborate from different locations. The engineer controls transport and cue
 mix from a web app (Electron + React); the artist monitors session state and
 meters in a native macOS app (JUCE / C++). Recording is captured losslessly on
 the artist's machine and the takes are transferred back to the engineer, with
-Reaper driving the actual capture. The Python `backend/` holds the services for
-both sides.
+the engineer's DAW driving the actual capture. The Python `backend/` holds the
+services for both sides.
 
 ## Locked architecture decisions
 
-- **DAW-agnostic core, Reaper as the showcase.** The core is not tied to any
-  one DAW. Reaper is the reference/showcase integration — build against a clean
-  seam, don't hard-wire Reaper assumptions into the core.
+- **Pro Tools is the target DAW.** `main` is moving to Pro Tools, controlled via
+  PTSL (the Pro Tools Scripting Library, gRPC). Reaper support was
+  reference/legacy work and is preserved on the `reaper` branch; it is not the
+  direction `main` is going.
+- **DAW-agnostic core behind `backend/daw.py`.** The rest of the backend imports
+  `daw`, never a specific DAW module. Each DAW integration (`pro_tools.py`, and
+  the legacy `reaper.py`) implements the same functions; `daw.py` picks the
+  active one. Don't hard-wire one DAW's assumptions into the core.
 - **Tailscale for internet connectivity, NOT WebRTC.** Cross-location sessions
   run over Tailscale. Do not introduce WebRTC, STUN/TURN, or peer signaling.
 - **Local-record-and-transfer.** Audio is recorded losslessly on the artist's
   machine and the finished takes are transferred to the engineer afterward. We
   do not stream lossless audio live for capture — the mic stream (UDP 5002) is
   monitoring only; the recording is the local file.
-- **File-based Lua IPC with Reaper.** Reaper is controlled via file-based Lua
-  scripts, NOT its web control API. The Reaper web API returns **404 on this
-  setup**, so do not build features that depend on HTTP calls to Reaper. Port
-  8080 is Reaper's own web interface and is not bound by Take.
+- **Legacy Reaper integration: file-based Lua IPC.** Where the Reaper code is
+  touched (`reaper.py`, `take_session.lua`), Reaper is controlled via file-based
+  Lua scripts, NOT its web control API — the Reaper web API returns **404 on
+  this setup**. Port 8080 is Reaper's own web interface and is not bound by
+  Take.
 
 ## Anti-scope-creep rules
 
-- **No Logic or Ableton support.** Reaper only. Do not add other DAW backends.
+- **No Logic or Ableton support.** Pro Tools is the target; Reaper stays only
+  as the legacy reference implementation.
 - **No installer, no code-signing, no notarization.** Distribution is out of
   scope. Do not add packaging/signing pipelines.
 - **No new features that weren't explicitly requested.** Implement what's asked,

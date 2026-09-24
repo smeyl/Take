@@ -8,7 +8,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests as _requests
-import reaper
+import daw
 
 app = Flask(__name__)
 CORS(app)
@@ -291,19 +291,19 @@ def select_track(index):
 @app.route("/reaper/record", methods=["POST"])
 def reaper_record():
     # take_session.lua arms the selected track and starts the transport
-    reaper.start_recording(selected_track)
+    daw.start_recording(selected_track)
     return jsonify({"ok": True, "track": selected_track})
 
 
 @app.route("/reaper/stop", methods=["POST"])
 def reaper_stop():
-    reaper.stop_recording()
+    daw.stop_recording()
     return jsonify({"ok": True})
 
 
 @app.route("/reaper/rtz", methods=["POST"])
 def reaper_rtz():
-    reaper.return_to_zero()
+    daw.return_to_zero()
     return jsonify({"ok": True})
 
 
@@ -384,7 +384,7 @@ def get_tracks():
 
 @app.route("/markers", methods=["GET"])
 def get_markers():
-    return jsonify(reaper.get_markers())
+    return jsonify(daw.get_markers())
 
 
 @app.route("/reaper/status", methods=["GET"])
@@ -392,7 +392,7 @@ def reaper_status():
     # "Reachable" = take_session.lua is alive (fresh transport export). The old
     # check pinged Reaper's web server root, which said OK even though every
     # web API endpoint 404s — a green dot over a dead control path.
-    return jsonify({"reachable": reaper.script_alive()})
+    return jsonify({"reachable": daw.alive()})
 
 
 def run_discovery_listener():

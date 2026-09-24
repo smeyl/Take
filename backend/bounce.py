@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-import reaper
+import daw
 from receiver import ARTIST_PORT
 from sender import send_file
 
@@ -32,15 +32,15 @@ def wait_for_bounce():
 
     # 1) Wait for the Lua completion signal — proof the render action actually
     #    ran (vs. the command sitting unread because the script isn't running).
-    while time.time() < deadline and not reaper.bounce_signalled():
+    while time.time() < deadline and not daw.bounce_signalled():
         time.sleep(POLL_INTERVAL)
-    if not reaper.bounce_signalled():
+    if not daw.bounce_signalled():
         print(f"Bounce: no completion signal from take_session.lua within "
               f"{TIMEOUT}s — is Reaper running with the Take script?")
         return None
 
     # The signal file names the actual render output for this bounce.
-    output = reaper.bounce_output_path()
+    output = daw.bounce_output_path()
     if not output:
         print("Bounce: done signal contained no output path — is take_session.lua "
               "up to date? (restart Reaper after updating the Take scripts)")
@@ -82,7 +82,7 @@ def _do_bounce():
     try:
         # take_session.lua mutes the unselected tracks around the render and
         # restores them — no web API involved (it 404s on this setup).
-        reaper.start_bounce(selected_tracks)
+        daw.start_bounce(selected_tracks)
         rendered = wait_for_bounce()
         if rendered:
             # Artist's file receiver — distinct port so it can never collide
@@ -137,7 +137,7 @@ def run_bounce_server():
 
 if __name__ == "__main__":
     print("Bouncing project in Reaper (via take_session.lua)...")
-    reaper.start_bounce()
+    daw.start_bounce()
 
     print("Waiting for render...")
     rendered = wait_for_bounce()

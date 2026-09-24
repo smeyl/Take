@@ -2,7 +2,7 @@ import json
 import socket
 import requests
 
-import reaper
+import daw
 
 PORT = 5005
 state = {"pos": 0.0, "playing": False}
@@ -13,7 +13,7 @@ def sender(target_ip, stop_evt):
     # Reaper web API, which returns 404 on this setup (see CLAUDE.md).
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     while not stop_evt.is_set():
-        pos, playing = reaper.get_transport()
+        pos, playing = daw.get_transport()
         packet = json.dumps({"pos": round(pos, 3), "playing": playing}).encode()
         try:
             sock.sendto(packet, (target_ip, PORT))
