@@ -2,15 +2,22 @@ import { useState, useEffect } from "react";
 import CueMix, { sendCue } from "./CueMix";
 import { StarIcon } from "./icons";
 
+const RELAY = "http://localhost:5010";
 const DEFAULT_CUE = { rev: 0, revMix: 0, del: 0, delMix: 0, comp: 0, vol: 100 };
 
 // Root of the detached cue mix window (loaded at #cue-popout).
 export default function CuePopout() {
   const [cue, setCue]       = useState(DEFAULT_CUE);
   const [pinned, setPinned] = useState(true);  // main.js opens the window on top
+  // Same source as the main window's DAW row: the relay's active DAW name.
+  const [dawName, setDawName] = useState("your DAW");
 
   useEffect(() => {
     window.take.getCue().then(c => { if (c) setCue(c); });
+    fetch(`${RELAY}/reaper/status`)
+      .then(r => r.ok ? r.json() : {})
+      .then(d => { if (d.name) setDawName(d.name); })
+      .catch(() => {});
     return window.take.onCueChanged(setCue);
   }, []);
 
@@ -34,7 +41,7 @@ export default function CuePopout() {
         <button
           className={`pin-btn ${pinned ? "on" : ""}`}
           style={{ WebkitAppRegion: "no-drag" }}
-          aria-label="Pin on top so Reaper can't cover it"
+          aria-label={`Pin on top so ${dawName} can't cover it`}
           aria-pressed={pinned}
           onClick={togglePinned}
         >
@@ -46,7 +53,7 @@ export default function CuePopout() {
       <CueMix cue={cue} onChange={updateCue} variant="popout" />
       {pinned && (
         <div className="cue-pop-foot">
-          <p>Pinned — stays above Reaper</p>
+          <p>Pinned — stays above {dawName}</p>
         </div>
       )}
     </div>
