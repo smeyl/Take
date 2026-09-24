@@ -106,7 +106,7 @@ export default function SessionScreen({ onStart }) {
             SESSION CODE
           </div>
           <div style={{
-            fontFamily: "'DM Mono', 'Courier New', monospace",
+            fontFamily: "'IBM Plex Mono', monospace",
             fontSize: 24, letterSpacing: "0.14em",
             color: rawCode ? C.bright : C.muted,
             marginBottom: 12,
@@ -133,7 +133,7 @@ export default function SessionScreen({ onStart }) {
             unless discovery is blocked and they fall back to manual entry. */}
         {engineerIP && (
           <div style={{
-            fontFamily: "'DM Mono', 'Courier New', monospace",
+            fontFamily: "'IBM Plex Mono', monospace",
             fontSize: 9, color: C.dim, textAlign: "center",
             marginBottom: 16, userSelect: "text",
           }}>

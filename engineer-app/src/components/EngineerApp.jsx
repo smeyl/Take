@@ -380,8 +380,8 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     : recording ? ["r", "Recording"]
     : ["g", "Connected"];
   const connRows = [
-    ["daw",    "Reaper",    dawStatus,    checkDaw],
-    ["artist", "Artist",    artistStatus, checkArtist],
+    ["daw",    "Reaper",    dawStatus,    checkDaw,    "#2dd4bf"],
+    ["artist", "Artist",    artistStatus, checkArtist, "#4f8fff"],
   ];
 
   return (
@@ -396,7 +396,13 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
             </>
           ) : (
             <>
-              <div className="eng-logo">T<span>ake</span></div>
+              <div className="eng-logo">
+                <svg width="26" height="18" viewBox="0 0 26 18" fill="none" aria-hidden="true">
+                  <circle cx="9"  cy="9" r="7" stroke="#2dd4bf" strokeWidth="1.6" />
+                  <circle cx="17" cy="9" r="7" stroke="#4f8fff" strokeWidth="1.6" />
+                </svg>
+                <div>T<span>ake</span></div>
+              </div>
               <div className="icon-btn" style={{ WebkitAppRegion: "no-drag" }} title="Settings" onClick={() => setView("settings")}>⚙</div>
             </>
           )}
@@ -415,10 +421,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span className="sec-label" style={{ marginBottom: 0 }}>Auto-sync</span>
                   <div
-                    className={`pill ${autoSync ? "on" : ""}`}
-                    style={{ cursor: "pointer", minWidth: 30, textAlign: "center" }}
+                    className={`switch ${autoSync ? "on" : ""}`}
+                    title={autoSync ? "On" : "Off"}
                     onClick={handleAutoSync}
-                  >{autoSync ? "On" : "Off"}</div>
+                  />
                 </div>
               </div>
             </div>
@@ -435,11 +441,11 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
               {/* Main column — connections, cue mix, takes */}
               <div className="ecol" style={{ flex: 1 }}>
                 <div className="conn-rows">
-                  {connRows.map(([key, label, [dot, status], check]) => (
+                  {connRows.map(([key, label, [dot, status], check, accent]) => (
                     <div key={key} className="conn-row">
                       <span className="conn-row-name">{label}</span>
-                      <div className={`dot ${dot}`} />
-                      <span className="conn-row-status" style={{ color: dot === "g" ? C.green : dot === "r" ? C.red : C.muted }}>{status}</span>
+                      <div className={`dot ${dot}`} style={dot === "g" ? { background: accent, boxShadow: `0 0 6px ${accent}88` } : undefined} />
+                      <span className="conn-row-status" style={{ color: dot === "g" ? accent : dot === "r" ? C.red : C.muted }}>{status}</span>
                       <div
                         className={`icon-btn sm ${rechecking[key] ? "spin" : ""}`}
                         title={`Re-check ${label} connection`}

@@ -16,7 +16,7 @@ export default function Knob({ label, value, color, onChange }) {
 
   return (
     <div className="knob-wrap">
-      <div className="knob" style={{ borderColor: color + "55" }} onMouseDown={onDown}>
+      <div className="knob" style={{ borderColor: color }} onMouseDown={onDown}>
         <div className="knob-tick" style={{ transform: `rotate(${angle}deg)`, background: color }} />
       </div>
       <div className="knob-lbl">{label}</div>

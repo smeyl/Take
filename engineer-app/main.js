@@ -49,7 +49,7 @@ function openCuePopout() {
   if (cueWin) { cueWin.focus(); return }
   cueWin = new BrowserWindow({
     width: 300,
-    height: 300,
+    height: 380,  // 2-column knob grid (3 rows) plus caption and pinned note
     resizable: false,
     fullscreenable: false,
     alwaysOnTop: true,  // pinned by default — stays above Reaper / Pro Tools

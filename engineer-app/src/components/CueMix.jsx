@@ -1,4 +1,3 @@
-import C from "../constants/colors";
 import Knob from "./Knob";
 
 const RELAY = "http://localhost:5010";
@@ -11,15 +10,15 @@ export const sendCue = async (param, value) => {
 };
 
 const KNOBS = [
-  ["Reverb",  "rev",    C.purple],
-  ["Rev mix", "revMix", C.purple],
-  ["Delay",   "del",    C.teal],
-  ["Del mix", "delMix", C.teal],
-  ["Comp",    "comp",   C.amber],
-  ["Cue vol", "vol",    C.green],
+  ["Reverb",  "rev",    "#2dd4bf"],
+  ["Rev mix", "revMix", "#2dd4bf"],
+  ["Delay",   "del",    "#4f8fff"],
+  ["Del mix", "delMix", "#4f8fff"],
+  ["Comp",    "comp",   "#a78bfa"],
+  ["Cue vol", "vol",    "#e8e8ea"],
 ];
 
-// The six cue knobs in a 3-column grid. Rendered embedded in the main window
+// The six cue knobs in a grid (3 columns embedded, 2 in the popout). Rendered embedded in the main window
 // or on its own in the detached cue window — the caller owns the state.
 export default function CueMix({ cue, onChange }) {
   return (

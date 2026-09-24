@@ -38,7 +38,9 @@ export default function CuePopout() {
         >Pinned</div>
       </div>
       <div className="cue-pop-body">
+        <div className="cue-pop-caption">→ sending to <span>artist</span></div>
         <CueMix cue={cue} onChange={updateCue} />
+        {pinned && <div className="cue-pop-foot">Pinned — stays above Reaper</div>}
       </div>
     </div>
   );
