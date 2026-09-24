@@ -50,6 +50,21 @@ body{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#0a0a0
 .eng-logo span{color:#4f8fff}
 .eng-conn{display:flex;align-items:center;gap:5px;font-size:9px;color:#5c5c6e}
 .eng-body{display:flex;flex:1;min-height:0;overflow:hidden}
+.eng-title{font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:#f0f0f8;margin-right:auto}
+.icon-btn{width:24px;height:24px;border-radius:5px;background:#18181c;border:1px solid #222228;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;color:#a0a0b8;user-select:none;flex-shrink:0;transition:all 0.15s}
+.icon-btn:hover{color:#f0f0f8;border-color:#3a3a45}
+.icon-btn.sm{width:20px;height:20px;font-size:11px}
+.icon-btn.spin{animation:spin 0.8s linear infinite;cursor:default}
+@keyframes spin{to{transform:rotate(360deg)}}
+.eng-code{text-align:center;padding:10px 16px;border-bottom:1px solid #222228;background:#0a0a0b}
+.eng-code-val{font-size:18px;letter-spacing:0.14em;color:#d4d4e8}
+.conn-rows{display:flex;flex-direction:column;gap:5px}
+.conn-row{display:flex;align-items:center;gap:7px;background:#18181c;border:1px solid #222228;border-radius:5px;padding:6px 8px 6px 10px}
+.conn-row-name{font-size:10px;color:#a0a0b8;margin-right:auto}
+.conn-row-status{font-size:9px;min-width:74px}
+.cue-sec{display:flex;flex-direction:column;gap:10px}
+.cue-sec-hdr{display:flex;align-items:center;justify-content:space-between}
+.cue-grid{display:grid;grid-template-columns:repeat(3,1fr);row-gap:12px;justify-items:center}
 .ecol{padding:12px 14px;border-right:1px solid #222228;display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto}
 .ecol:last-child{border-right:none}
 .ebtn{padding:8px 12px;border-radius:5px;border:1px solid #222228;cursor:pointer;font-family:inherit;font-size:10px;font-weight:500;text-align:center;transition:all 0.15s;user-select:none}
@@ -114,3 +129,10 @@ body{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#0a0a0
 .bw-lbl{font-size:8px;color:#5c5c6e;text-transform:uppercase;letter-spacing:0.08em}
 .bw-val{font-size:13px;font-weight:500;color:#f0f0f8}
 .bw-unit{font-size:9px;color:#5c5c6e}
+
+/* ── DETACHED CUE MIX WINDOW ── */
+.cue-pop{width:100%;height:100%;display:flex;flex-direction:column;background:#111113;font-size:11px}
+.cue-pop-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 72px;background:#0a0a0b;border-bottom:1px solid #222228}
+.cue-pop-title{font-family:'Syne',sans-serif;font-weight:700;font-size:12px;color:#f0f0f8}
+.cue-pop-body{flex:1;display:flex;align-items:center;justify-content:center;padding:14px}
+.cue-pop-body .cue-grid{width:100%}
