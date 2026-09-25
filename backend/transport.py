@@ -15,6 +15,7 @@ import soundfile as sf
 import backing_player
 import cue_receiver
 import loop_latency
+import timecode
 from resampler import Resampler
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -356,8 +357,11 @@ def status():
                                    math.ceil(_pending["deadline"] - time.monotonic())))
         # backing_duration = real length of the loaded backing track (0 if none),
         # so the artist app's waveform ruler shows the true track length.
+        # engineer_cursor = where the engineer's cursor is in the DAW (seconds,
+        # null if unknown), for the live marker on the backing track.
         return jsonify({"recording": active, "take": _take, "countdown": countdown,
-                        "backing_duration": round(backing_player.duration, 3)})
+                        "backing_duration": round(backing_player.duration, 3),
+                        "engineer_cursor": timecode.state["cursor"]})
 
 
 @app.route("/levels", methods=["GET"])

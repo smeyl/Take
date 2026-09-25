@@ -68,6 +68,11 @@ def get_transport():
         return 0.0, False
 
 
+def get_cursor():
+    # take_session.lua doesn't export the edit cursor separately
+    return None
+
+
 def is_recording():
     """True while Reaper's transport is recording, per take_session.lua's
     export. False when the export is missing or predates the flag."""

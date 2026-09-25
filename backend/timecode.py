@@ -6,7 +6,9 @@ import requests
 import daw
 
 PORT = 5005
-state = {"pos": 0.0, "playing": False}
+# cursor: the engineer's cursor / selection position in the DAW (seconds),
+# mirrored live on the artist's backing track; None when not reported.
+state = {"pos": 0.0, "playing": False, "cursor": None}
 # (pos, playing, time.monotonic() when received) — replaced as one tuple so
 # position_at() never mixes an old packet's time with a new one's position.
 _fix = (0.0, False, 0.0)
@@ -35,7 +37,9 @@ def sender(target_ip, stop_evt):
         pos, playing = daw.get_transport()
         now = time.monotonic()
         if playing != was_playing or now - last_sent >= SEND_INTERVAL:
-            packet = json.dumps({"pos": round(pos, 4), "playing": playing}).encode()
+            cursor = daw.get_cursor()
+            packet = json.dumps({"pos": round(pos, 4), "playing": playing,
+                                 "cursor": None if cursor is None else round(cursor, 3)}).encode()
             try:
                 sock.sendto(packet, (target_ip, PORT))
             except OSError:
@@ -63,6 +67,8 @@ def receiver(stop_evt):
             parsed = json.loads(data.decode())
             state["pos"]     = float(parsed.get("pos", 0.0))
             state["playing"] = bool(parsed.get("playing", False))
+            cursor = parsed.get("cursor")
+            state["cursor"] = None if cursor is None else float(cursor)
             _fix = (state["pos"], state["playing"], received)
         except socket.timeout:
             continue

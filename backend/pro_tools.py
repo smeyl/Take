@@ -38,6 +38,12 @@ CAPTURE_FILE = "/tmp/take_pt_capture.json"  # where the artist's capture began (
 STALE_AFTER  = 3600   # seconds — older record/capture info is from a dead session
 ALIVE_CACHE  = 1.0    # seconds — record_watcher asks alive() every 50 ms
 STATE_CACHE  = 0.005  # seconds — timecode and record_watcher share transport reads
+# Deadline for the reads Take polls (transport, selection, session). py-ptsl
+# sends every call with no gRPC deadline, and a modal dialog in Pro Tools can
+# leave a call unanswered indefinitely — which would freeze the timecode, the
+# record watcher and the cursor mirror behind the shared lock. A read
+# normally answers in ~4 ms.
+READ_TIMEOUT = 1.0    # seconds
 # Where the artist's live stream is played so Pro Tools can record it. PTSL
 # can't report the Playback Engine or track inputs, so this is configured.
 # It must NOT be Pro Tools' Playback Engine device itself: Pro Tools takes that
@@ -81,6 +87,21 @@ def _port_open():
         return False
 
 
+class _DeadlineStub:
+    """py-ptsl's gRPC stub, with an optional deadline on each request (it
+    sets none). `timeout` is set by _call, under the lock, per call."""
+
+    def __init__(self, stub):
+        self._stub = stub
+        self.timeout = None
+
+    def SendGrpcRequest(self, request):
+        return self._stub.SendGrpcRequest(request, timeout=self.timeout)
+
+    def __getattr__(self, name):
+        return getattr(self._stub, name)
+
+
 def _eng():
     """The shared Engine, (re)connecting if needed. Raises when Pro Tools
     isn't reachable."""
@@ -90,21 +111,32 @@ def _eng():
             raise ConnectionError("Pro Tools (PTSL) is not running")
         _engine = ptsl.Engine(company_name="Take", application_name="Take",
                               address=f"localhost:{PTSL_PORT}")
+        _engine.client.raw_client = _DeadlineStub(_engine.client.raw_client)
     return _engine
 
 
-def _call(fn, default=None):
-    """Run fn(engine) under the lock. Connection loss resets the engine so the
-    next call reconnects; any PTSL error returns `default`."""
+def _call(fn, default=None, timeout=None):
+    """Run fn(engine) under the lock, each PTSL request in it limited to
+    `timeout` seconds (None = no limit, for long edits and imports).
+    Connection loss resets the engine so the next call reconnects; a timeout
+    doesn't (Pro Tools is busy, not gone). Any PTSL error returns `default`."""
     global _engine
     with _lock:
+        stub = None
         try:
-            return fn(_eng())
-        except grpc.RpcError:
-            _engine = None
+            e = _eng()
+            stub = e.client.raw_client
+            stub.timeout = timeout
+            return fn(e)
+        except grpc.RpcError as x:
+            if x.code() != grpc.StatusCode.DEADLINE_EXCEEDED:
+                _engine = None
             return default
         except (CommandError, ConnectionError):
             return default
+        finally:
+            if stub is not None:
+                stub.timeout = None
 
 
 def _write_json(path, data):
@@ -140,7 +172,7 @@ def alive():
     now = time.time()
     if now - _alive["t"] < ALIVE_CACHE:
         return _alive["value"]
-    value = _port_open() and _call(lambda e: bool(e.session_name()), False)
+    value = _port_open() and _call(lambda e: bool(e.session_name()), False, READ_TIMEOUT)
     _alive.update(t=now, value=bool(value))
     return _alive["value"]
 
@@ -150,15 +182,16 @@ def alive():
 # t: when the read was issued; read_at: midpoint of the call, when the
 # reported state was current; prev_read_at: the read before that.
 _state = {"t": 0.0, "value": None, "read_at": 0.0, "prev_read_at": 0.0}
-_roll = {"playing": False, "t0": 0.0, "in_sec": 0.0, "read_t": 0.0}  # this process's play estimate
-STOPPED_REREAD = 0.5  # seconds between selection reads while stopped
+_roll = {"playing": False, "t0": 0.0, "in_sec": 0.0}  # this process's play estimate
+CURSOR_REREAD = 0.2   # seconds between reads of the engineer's cursor (selection)
+_cursor = {"sec": None, "read_t": 0.0}
 _was_recording = {"value": False}
 
 
 def _transport_state():
     now = time.time()
     if now - _state["t"] >= STATE_CACHE:
-        value = _call(lambda e: e.transport_state())
+        value = _call(lambda e: e.transport_state(), None, READ_TIMEOUT)
         _state.update(t=now, value=value, prev_read_at=_state["read_at"],
                       read_at=(now + time.time()) / 2)
     return _state["value"]
@@ -170,6 +203,23 @@ def _sample_rate(e):
 
 def _selection_in_samples(e):
     return int(e.get_timeline_selection(pt.TLType_Samples)[0])
+
+
+def _selection_in_seconds(default):
+    return _call(lambda e: _selection_in_samples(e) / _sample_rate(e), default, READ_TIMEOUT)
+
+
+def get_cursor():
+    """The engineer's cursor: the timeline selection's in point (seconds),
+    re-read every 0.2 s whether or not the transport is rolling. None until
+    the first read succeeds."""
+    now = time.time()
+    if now - _cursor["read_t"] >= CURSOR_REREAD:
+        _cursor["read_t"] = now
+        sec = _selection_in_seconds(None)
+        if sec is not None:
+            _cursor["sec"] = sec
+    return _cursor["sec"]
 
 
 def get_transport():
@@ -188,14 +238,13 @@ def get_transport():
         # read below, which takes another few ms.
         prev, now_read = _state["prev_read_at"], _state["read_at"]
         started = (prev + now_read) / 2 if 0 < now_read - prev <= 0.05 else now_read
-        in_sec = _call(lambda e: _selection_in_samples(e) / _sample_rate(e), 0.0)
+        in_sec = _selection_in_seconds(_roll["in_sec"])
         _roll.update(playing=True, t0=started, in_sec=in_sec)
     elif not playing:
         _roll["playing"] = False
-        if time.time() - _roll["read_t"] >= STOPPED_REREAD:
-            _roll["read_t"] = time.time()
-            _roll["in_sec"] = _call(lambda e: _selection_in_samples(e) / _sample_rate(e),
-                                    _roll["in_sec"])
+        cursor = get_cursor()   # stopped: the timecode position is the cursor
+        if cursor is not None:
+            _roll["in_sec"] = cursor
     if playing:
         return _roll["in_sec"] + (time.time() - _roll["t0"]), True
     return _roll["in_sec"], False
@@ -209,7 +258,7 @@ def is_recording():
     if recording and not _was_recording["value"]:
         seen_at = _state["t"]  # when the Recording state was read, not after the reads below
         info = _call(lambda e: {"rec_in": _selection_in_samples(e),
-                                "sr": _sample_rate(e)})
+                                "sr": _sample_rate(e)}, None, READ_TIMEOUT)
         if info:
             info["t"] = seen_at
             _write_json(RECORD_FILE, info)
@@ -221,7 +270,7 @@ def get_tracks():
     """[{index, name, armed}] for timeline tracks (audio, aux, instrument,
     MIDI). index is 0-based in session order; Pro Tools addresses tracks by
     name, so names are what the rest of this module uses."""
-    tracks = _call(lambda e: e.track_list(), []) or []
+    tracks = _call(lambda e: e.track_list(), [], READ_TIMEOUT) or []
     return [{"index": t.index - 1, "name": t.name,
              "armed": bool(t.track_attributes.is_record_enabled)}
             for t in tracks if t.type in TIMELINE_TYPES]
@@ -245,7 +294,7 @@ def get_markers():
             except ValueError:
                 pass  # not a sample count — see get_markers note in the report
         return out
-    return _call(read, []) or []
+    return _call(read, [], READ_TIMEOUT) or []
 
 
 # ── Transport commands ────────────────────────────────────────────────────────

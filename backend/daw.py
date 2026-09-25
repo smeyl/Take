@@ -33,6 +33,12 @@ def get_transport():
     return _impl.get_transport()
 
 
+def get_cursor():
+    """The engineer's cursor / edit position (seconds) — mirrored live on the
+    artist's backing track. None when the DAW doesn't report one."""
+    return _impl.get_cursor()
+
+
 def is_recording():
     """True while the DAW's own transport is recording. record_watcher.py
     follows this to start and stop the artist's capture."""
