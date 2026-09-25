@@ -14,6 +14,7 @@ import sounddevice as sd
 import soundfile as sf
 import backing_player
 import cue_receiver
+import loop_latency
 from resampler import Resampler
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -242,6 +243,7 @@ def _audio_thread():
         print(f"[transport] cue monitor output failed ({e}) — no local monitoring", flush=True)
     audio.update(rate=rate, input_latency=inp.latency,
                  output_latency=out.latency if out is not None else 0.0)
+    loop_latency.artist.update(input_latency=inp.latency, packet=STREAM_CHUNK / STREAM_RATE)
     _audio_ready.set()
     inp.start()
     if out is not None:

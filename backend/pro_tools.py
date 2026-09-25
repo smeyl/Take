@@ -37,7 +37,7 @@ RECORD_FILE  = "/tmp/take_pt_record.json"   # where/when the current recording s
 CAPTURE_FILE = "/tmp/take_pt_capture.json"  # where the artist's capture began (for the swap)
 STALE_AFTER  = 3600   # seconds — older record/capture info is from a dead session
 ALIVE_CACHE  = 1.0    # seconds — record_watcher asks alive() every 50 ms
-STATE_CACHE  = 0.03   # seconds — timecode and record_watcher share transport reads
+STATE_CACHE  = 0.005  # seconds — timecode and record_watcher share transport reads
 # Where the artist's live stream is played so Pro Tools can record it. PTSL
 # can't report the Playback Engine or track inputs, so this is configured.
 # It must NOT be Pro Tools' Playback Engine device itself: Pro Tools takes that
@@ -147,7 +147,9 @@ def alive():
 
 # ── Transport and session state ───────────────────────────────────────────────
 
-_state = {"t": 0.0, "value": None}
+# t: when the read was issued; read_at: midpoint of the call, when the
+# reported state was current; prev_read_at: the read before that.
+_state = {"t": 0.0, "value": None, "read_at": 0.0, "prev_read_at": 0.0}
 _roll = {"playing": False, "t0": 0.0, "in_sec": 0.0, "read_t": 0.0}  # this process's play estimate
 STOPPED_REREAD = 0.5  # seconds between selection reads while stopped
 _was_recording = {"value": False}
@@ -156,7 +158,9 @@ _was_recording = {"value": False}
 def _transport_state():
     now = time.time()
     if now - _state["t"] >= STATE_CACHE:
-        _state.update(t=now, value=_call(lambda e: e.transport_state()))
+        value = _call(lambda e: e.transport_state())
+        _state.update(t=now, value=value, prev_read_at=_state["read_at"],
+                      read_at=(now + time.time()) / 2)
     return _state["value"]
 
 
@@ -178,8 +182,14 @@ def get_transport():
         return 0.0, False
     playing = state in PLAYING_STATES
     if playing and not _roll["playing"]:
+        # Pro Tools started somewhere between the last read that said stopped
+        # and this one: take the midpoint (±half a poll — 5 ms at timecode's
+        # 10 ms polling). Stamped from the reads, not after the selection
+        # read below, which takes another few ms.
+        prev, now_read = _state["prev_read_at"], _state["read_at"]
+        started = (prev + now_read) / 2 if 0 < now_read - prev <= 0.05 else now_read
         in_sec = _call(lambda e: _selection_in_samples(e) / _sample_rate(e), 0.0)
-        _roll.update(playing=True, t0=time.time(), in_sec=in_sec)
+        _roll.update(playing=True, t0=started, in_sec=in_sec)
     elif not playing:
         _roll["playing"] = False
         if time.time() - _roll["read_t"] >= STOPPED_REREAD:

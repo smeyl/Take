@@ -6,6 +6,7 @@ import sys
 import time
 import threading
 import requests
+from urllib.parse import urlparse
 
 # The relay runs on the engineer's machine. The host is resolved at startup
 # from the JUCE session file, TAKE_RELAY_HOST, or a prompt — see below.
@@ -16,6 +17,7 @@ import watcher
 import artist
 import backing_player
 import cue_receiver
+import loop_latency
 import receiver
 import stream_sender
 import timecode
@@ -39,7 +41,16 @@ def get_local_ip():
 def run_heartbeat(relay_url, code, stop_evt, on_dead):
     engineer_was_alive = None
     missed = 0
+    relay = urlparse(relay_url)
     while not stop_evt.is_set():
+        # Time a TCP connect to the relay — one network round trip — for the
+        # backing-track advance (loop_latency.py).
+        try:
+            t = time.perf_counter()
+            socket.create_connection((relay.hostname, relay.port), timeout=3).close()
+            loop_latency.add_rtt(time.perf_counter() - t)
+        except OSError:
+            pass
         try:
             requests.post(f"{relay_url}/session/{code}/heartbeat",
                           json={"role": "artist"}, timeout=3)
@@ -49,6 +60,7 @@ def run_heartbeat(relay_url, code, stop_evt, on_dead):
             r = requests.get(f"{relay_url}/session/{code}/status", timeout=3)
             if r.ok:
                 engineer_alive = r.json()["engineer"]
+                loop_latency.update_engineer(r.json().get("latency"))
                 if engineer_alive:
                     if engineer_was_alive is False:
                         print("✓ Engineer reconnected", flush=True)

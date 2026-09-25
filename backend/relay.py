@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import socket as _socket
 import string
@@ -148,6 +149,31 @@ def heartbeat(code):
     return jsonify({"ok": True})
 
 
+# The engineer side's share of the artist's backing-track advance (see
+# loop_latency.py), sent back to the artist with every status check.
+# TAKE_DAW_INPUT_OFFSET_MS covers the fixed delays Take can't see on the DAW
+# side, lined up for what the engineer HEARS: mostly the DAW's own input
+# monitoring latency (~45 ms here, which follows Pro Tools' H/W buffer size),
+# plus the gap between the DAW reporting "playing" and its audio rolling.
+# 47 ms was calibrated with click-track takes on Pro Tools 2026.4.1 at 48 kHz
+# through an aggregate device. With it the streamed recording itself lands
+# early by the monitoring latency — it's replaced by the lossless take.
+DAW_INPUT_OFFSET_MS = float(os.environ.get("TAKE_DAW_INPUT_OFFSET_MS", "47"))
+_receiver = {"ms": None}   # stream receiver delay, reported by start_engineer.py
+
+
+@app.route("/latency/receiver", methods=["POST"])
+def set_receiver_latency():
+    data = request.get_json(silent=True) or {}
+    try:
+        _receiver["ms"] = float(data["ms"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "ms required"}), 400
+    log(f"Stream receiver delay {_receiver['ms']:.1f} ms, "
+        f"DAW input offset {DAW_INPUT_OFFSET_MS:.1f} ms")
+    return jsonify({"ok": True})
+
+
 @app.route("/session/<code>/status", methods=["GET"])
 def session_status(code):
     if code not in sessions:
@@ -160,6 +186,8 @@ def session_status(code):
         "engineer": engineer_alive,
         "artist": artist_alive,
         "both_alive": engineer_alive and artist_alive,
+        "latency": {"receiver_ms": _receiver["ms"],
+                    "daw_input_offset_ms": DAW_INPUT_OFFSET_MS},
     })
 
 

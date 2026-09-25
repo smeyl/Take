@@ -107,7 +107,7 @@ Take only acts when a take arrives, and only on the track that was armed:
 
 ### Known limitations with Pro Tools
 
-- **No playhead read in PTSL.** Take works out positions from where the transport started plus elapsed time. Takes are placed by where the artist was in their backing track when capture began, so this only affects placement when no backing track is playing (it then lands late by the network round trip and audio latencies). The timecode that keeps the artist's backing track in sync doesn't follow loops, pre-roll, scrubbing, or seeking while the transport is rolling.
+- **No playhead read in PTSL.** Take works out positions from where the transport started plus elapsed time. Takes are placed by where the artist was in their backing track when capture began, so this only affects placement when no backing track is playing (it then lands late by the network round trip and audio latencies). The timecode that keeps the artist's backing track in sync doesn't follow loops, pre-roll, scrubbing, or seeking while the transport is rolling. Pro Tools also reports that it has started only to within about ±15–20 ms of when its audio actually starts (measured), so what you hear lines up to within that, varying from one playback start to the next. Takes are unaffected: they're placed sample-accurately regardless.
 - **Take doesn't start Pro Tools recording itself** — the engineer presses Record in Pro Tools.
 - **Not yet tested:** pre-roll, loop record, QuickPunch, Shuffle mode, *Link Timeline and Edit Selection* turned off.
 - **Backing track bounce:** the backend can export the session's mix from Pro Tools as MP3 and send it to the artist (the bounce service on port 5006), but the current engineer app has no button for it.
@@ -115,6 +115,8 @@ Take only acts when a take arrives, and only on the track that was armed:
 ### Live stream into Pro Tools
 
 While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one. The stream is held in a fixed 40 ms buffer against network jitter before it's played, so its delay stays constant; set `TAKE_STREAM_BUFFER_MS` to change it (more for a shaky connection, less for tighter monitoring).
+
+So that you hear the artist in time with the session, the artist's backing track plays ahead of Pro Tools by the whole loop's delay: the network round trip, both machines' audio latencies, the stream buffer, and a fixed Pro Tools offset (`TAKE_DAW_INPUT_OFFSET_MS`, default 47 ms, mostly Pro Tools' own input-monitoring latency, which grows with its H/W buffer size). The amount is worked out when playback starts and held until it stops; the artist backend logs it. If the vocal sounds consistently early or late, adjust `TAKE_DAW_INPUT_OFFSET_MS` by that much.
 
 The device must **not** be Pro Tools' Playback Engine device itself: Pro Tools takes that device over, and audio other apps send to it never arrives (tested with Audio Bridge 16 as the engine — Pro Tools recorded digital silence). Instead, use a Playback Engine that *includes* Audio Bridge 2-A as inputs:
 

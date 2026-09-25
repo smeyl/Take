@@ -4,6 +4,7 @@ import threading
 import numpy as np
 import soundfile as sf
 import sounddevice as sd
+import loop_latency
 import timecode as tc
 
 # Data lives at the repo root (sibling of this backend/ folder), not inside it.
@@ -30,6 +31,7 @@ _anchor = None
 # artist hears everything 28 ms late and takes are placed 28 ms late.
 MP3_LEAD_IN = 0.0279  # seconds
 
+START_POLL    = 0.02  # seconds between checks for the timecode starting
 SYNC_INTERVAL = 0.5   # seconds between drift checks
 DRIFT_LIMIT   = 2.0   # seconds before we seek
 
@@ -84,24 +86,30 @@ def run_backing_player():
 def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
     global _anchor
     while not stop_event.is_set():
-        # Wait for Reaper to start playing
+        # Wait for the DAW to start playing
         while not stop_event.is_set() and not tc.state["playing"]:
             if _file_changed(loaded_mtime):
                 print("Backing track updated — reloading")
                 time.sleep(0.5)  # let the upload finish
                 return
-            time.sleep(SYNC_INTERVAL)
+            time.sleep(START_POLL)
         if stop_event.is_set():
             return
 
-        # Seek to current timecode position
-        tc_pos     = tc.state["pos"]
-        start      = max(0, min(int(tc_pos * samplerate), total_samples - 1))
-        pos        = [start]          # mutable so callback can update it
-        seek_event = threading.Event()
+        # Play ahead of the timecode by the loop latency, so the artist's
+        # live vocal reaches the DAW in time with it. Fixed for this pass.
+        advance, terms = loop_latency.advance()
+        pos = [None]                  # track position (samples); set by the first callback
 
         def callback(outdata, frames, time_info, status):
             global _anchor
+            if pos[0] is None:
+                # Start where the timecode will be when this first block
+                # reaches the output, plus the advance — so neither the
+                # timecode packet's age nor the time taken to open this
+                # stream makes the track late.
+                dac = time.monotonic() + (time_info.outputBufferDacTime - time_info.currentTime)
+                pos[0] = max(0, round((tc.position_at(dac) + advance) * samplerate))
             s     = pos[0]
             _anchor = (time_info.outputBufferDacTime, s, samplerate)
             e     = s + frames
@@ -111,9 +119,12 @@ def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
                 outdata[len(chunk) :] = 0
             pos[0] = e
 
-        print(f"Backing track — playing from {tc_pos:.1f}s")
         with sd.OutputStream(samplerate=samplerate, channels=channels,
                              dtype="float32", callback=callback):
+            while pos[0] is None and not stop_event.is_set():
+                time.sleep(0.005)
+            print(f"Backing track — playing from {pos[0] / samplerate:.3f}s, "
+                  f"{advance * 1000:.1f} ms ahead of the timecode {terms}", flush=True)
             while not stop_event.is_set():
                 time.sleep(SYNC_INTERVAL)
 
@@ -126,8 +137,10 @@ def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
                     time.sleep(0.5)  # let the upload finish
                     return
 
-                backing_sec = pos[0] / samplerate
-                drift       = abs(backing_sec - tc.state["pos"])
+                # Only for seeks and loops the timecode can't follow — the
+                # advance itself is never adjusted mid-playback.
+                expected = tc.position_at(time.monotonic()) + advance
+                drift    = abs(pos[0] / samplerate - expected)
                 if drift > DRIFT_LIMIT:
                     print(f"Backing track — drift {drift:.1f}s, seeking")
                     break   # stream closes; outer loop restarts at fresh TC pos

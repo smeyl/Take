@@ -172,6 +172,14 @@ def run_stream_receiver():
             print(f"Stream receiver: artist mic → {dev_name} ({daw.NAME} input) @ "
                   f"{rate} Hz, {STREAM_BUFFER_MS:.0f} ms jitter buffer + "
                   f"{stream.latency * 1000:.1f} ms output", flush=True)
+            # Part of the artist's backing-track advance (loop_latency.py).
+            try:
+                requests.post(f"{RELAY_URL}/latency/receiver",
+                              json={"ms": STREAM_BUFFER_MS + stream.latency * 1000},
+                              timeout=3)
+            except requests.RequestException:
+                print("Stream receiver: couldn't report its delay to the relay — "
+                      "the artist's backing track won't be advanced for it", flush=True)
         except Exception as e:
             stream = None
             print(f"Stream receiver: opening {dev_name} failed ({e})")
