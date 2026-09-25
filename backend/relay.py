@@ -206,7 +206,7 @@ _CUE_PARAM_MAP = {
     "revMix": "reverbMix",    # wet/dry    → Reverb.wet_level / dry_level
     "del":    "delay",        # time       → Delay.delay_seconds
     "delMix": "delayMix",     # wet/dry    → Delay.mix
-    "comp":   "compression",  # threshold  → stored, DSP pass-through for now
+    "comp":   "compression",  # amount     → Compressor.threshold_db (0 = off)
     "vol":    "volume",       # output gain
     # "ratio" absent — no backing state in UI or DSP
 }

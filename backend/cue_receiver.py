@@ -20,14 +20,20 @@ def process(block, sample_rate):
     Called from the artist's output audio callback, at the device's native
     rate, a few ms of audio at a time."""
     # Update effect attributes in-place — preserves internal buffer state across chunks
-    _compressor.threshold_db = -40.0 + (params["compression"] / 100.0) * 40.0
+    # 0 = off (threshold at full scale, nothing is compressed), like every
+    # other cue knob at 0; 100 = heaviest (-40 dB threshold).
+    _compressor.threshold_db = -40.0 * (params["compression"] / 100.0)
     _compressor.ratio        = 4.0
     _compressor.attack_ms    = 10.0
     _compressor.release_ms   = 100.0
 
+    # JUCE's reverb (under pedalboard) multiplies dry_level by 2, so dry is
+    # halved here: 0% mix is then unity gain, not +6 dB. Its wet side comes
+    # out near unity at wet_level 1.0 (measured with noise), so 100% mix is
+    # about as loud as the dry signal and the knob crossfades between them.
     _reverb.room_size   = 0.1 + (params["reverb"] / 100.0) * 0.9
     _reverb.wet_level   = params["reverbMix"] / 100.0
-    _reverb.dry_level   = 1.0 - params["reverbMix"] / 100.0
+    _reverb.dry_level   = (1.0 - params["reverbMix"] / 100.0) / 2.0
     _reverb.damping     = 0.5
     _reverb.freeze_mode = 0.0
 
