@@ -9,7 +9,11 @@ Requires Pillow:  /usr/bin/python3 -m pip install --user Pillow
 Generated PNG/icns/iconset files are written next to this script in assets/
 and are git-ignored; only this script is tracked. The finished icons are
 copied into both app bundles as Contents/Resources/AppIcon.icns (the
-Info.plist of each bundle already sets CFBundleIconFile = AppIcon).
+Info.plist of each bundle already sets CFBundleIconFile = AppIcon). The
+engineer's AppIcon.icns is also copied into the dev Electron.app by
+engineer-app/scripts/name-electron.js (npm postinstall). The artist icon is
+also written as artist-app/Take/Resources/AppIcon.png (tracked), which
+Take.jucer uses as the JUCE app's icon (the Projucer builds its .icns).
 
 ────────────────────────────────────────────────────────────────────────────
 ICON SPEC
@@ -122,12 +126,25 @@ def install(icns, bundle):
     print(f"installed {os.path.basename(icns)} -> {dest}")
 
 
+JUCE_ICON = os.path.join(REPO, "artist-app", "Take", "Resources", "AppIcon.png")
+
+
+def install_juce_icon(master):
+    """1024 px PNG the Projucer turns into the JUCE artist app's Icon.icns."""
+    os.makedirs(os.path.dirname(JUCE_ICON), exist_ok=True)
+    master.save(JUCE_ICON)
+    print(f"installed artist icon -> {JUCE_ICON}")
+
+
 RENDERERS = {"engineer": render_engineer, "artist": render_artist}
 
 if __name__ == "__main__":
     for name, render in RENDERERS.items():
-        icns = build_icns(render(), name)
+        master = render()
+        icns = build_icns(master, name)
         install(icns, BUNDLES[name])
+        if name == "artist":
+            install_juce_icon(master)
     # Repaint Dock/Finder so the new icons show immediately (non-fatal).
     subprocess.run(["killall", "Dock", "Finder"], check=False)
     print("done.")
