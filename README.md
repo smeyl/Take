@@ -107,7 +107,7 @@ Take only acts when a take arrives, and only on the track that was armed:
 
 ### Known limitations with Pro Tools
 
-- **No playhead read in PTSL.** Take works out positions from where the transport started plus elapsed time. The swap position is accurate to roughly the watcher's 50 ms polling plus network delay. The timecode that keeps the artist's backing track in sync doesn't follow loops, pre-roll, scrubbing, or seeking while the transport is rolling.
+- **No playhead read in PTSL.** Take works out positions from where the transport started plus elapsed time. Takes are placed by where the artist was in their backing track when capture began, so this only affects placement when no backing track is playing (it then lands late by the network round trip and audio latencies). The timecode that keeps the artist's backing track in sync doesn't follow loops, pre-roll, scrubbing, or seeking while the transport is rolling.
 - **Take doesn't start Pro Tools recording itself** — the engineer presses Record in Pro Tools.
 - **Not yet tested:** pre-roll, loop record, QuickPunch, Shuffle mode, *Link Timeline and Edit Selection* turned off.
 - **Backing track bounce:** the backend can export the session's mix from Pro Tools as MP3 and send it to the artist (the bounce service on port 5006), but the current engineer app has no button for it.

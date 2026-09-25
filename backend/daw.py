@@ -52,13 +52,17 @@ def get_markers():
 
 # ── Transport commands ────────────────────────────────────────────────────────
 
-def start_recording(track=0):
+def start_recording(track=0, capture_pos=None):
     """Sent when the artist's lossless capture actually begins (after the
     countdown). If the DAW is recording (the engineer pressed Record in the
     DAW), note where the capture begins so place_take() can line the file up.
-    If it isn't, an implementation may start it (Reaper arms `track` and
-    records) or decline (Pro Tools); returns False when it didn't act."""
-    return _impl.start_recording(track)
+    capture_pos is the backing-track position (seconds, = timeline position)
+    the artist heard at the file's first sample, when their backing track was
+    playing; an implementation should prefer it to its own estimate.
+    If the DAW isn't recording, an implementation may start it (Reaper arms
+    `track` and records) or decline (Pro Tools); returns False when it didn't
+    act."""
+    return _impl.start_recording(track, capture_pos)
 
 
 def stop_recording():

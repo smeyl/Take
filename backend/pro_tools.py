@@ -240,10 +240,13 @@ def get_markers():
 
 # ── Transport commands ────────────────────────────────────────────────────────
 
-def start_recording(track=0):
+def start_recording(track=0, capture_pos=None):
     """The artist's capture just began. If Pro Tools is recording (the
     engineer pressed Record), work out where on the timeline that is and save
-    it for place_take(). Take doesn't start Pro Tools recording itself: the
+    it for place_take(). capture_pos (seconds), when the artist's backing
+    track was playing, is where they were in it at the file's first sample —
+    where the take belongs. Without it, fall back to Pro Tools' position now,
+    which is late by the round trip plus the audio latencies on both ends. Take doesn't start Pro Tools recording itself: the
     record button's state can't be read reliably, so toggling it blind could
     turn it off instead."""
     if _transport_state() not in RECORDING_STATES:
@@ -256,7 +259,16 @@ def start_recording(track=0):
               "engineer backend running?) — the take can't be placed in sync.",
               flush=True)
         return False
-    capture_start = rec["rec_in"] + round((time.time() - rec["t"]) * rec["sr"])
+    estimate = rec["rec_in"] + round((time.time() - rec["t"]) * rec["sr"])
+    if capture_pos is not None:
+        capture_start = round(capture_pos * rec["sr"])
+        print(f"[capture] artist heard {capture_pos:.3f} s as capture began; "
+              f"Pro Tools was at {estimate / rec['sr']:.3f} s "
+              f"({(estimate - capture_start) / rec['sr'] * 1000:+.0f} ms)", flush=True)
+    else:
+        capture_start = estimate
+        print("[capture] no backing-track position from the artist — using "
+              "Pro Tools' position (late by the round trip)", flush=True)
     track_name = _first_armed_track()
     if track_name is None:
         tracks = get_tracks()

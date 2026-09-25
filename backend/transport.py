@@ -65,8 +65,20 @@ _pending = None        # {"timer": threading.Timer, "cancelled": bool} during co
 
 
 def _reaper_start():
+    # Tell the DAW where in the backing track the artist was when the first
+    # recorded sample was captured — the position they were performing to.
+    # That is where the take belongs; the DAW's own "now" is later by the
+    # network round trip plus both machines' audio latencies.
+    body = {}
+    deadline = time.monotonic() + 0.5
+    while capture["t0"] is None and time.monotonic() < deadline:
+        time.sleep(0.005)
+    if capture["t0"] is not None:
+        heard = backing_player.heard_position(capture["t0"])
+        if heard is not None:
+            body["capture_pos"] = round(heard, 6)
     try:
-        requests.post(f"{RELAY_URL}/reaper/record", timeout=5)
+        requests.post(f"{RELAY_URL}/reaper/record", json=body, timeout=5)
     except requests.RequestException:
         pass
 
@@ -157,6 +169,7 @@ MONITOR_HARD_CAP = 32              # memory bound only; normal depth is 0-5 bloc
 TRIM_WINDOW = 200                  # output callbacks (~0.5 s at 48 kHz / 128)
 _trim = {"min": MONITOR_HARD_CAP, "n": 0}
 _level_window = collections.deque(maxlen=16)   # ~40 ms of per-block mean squares
+capture = {"t0": None}             # host time of the first recorded sample (ADC)
 
 
 def _find_device(name, kind):
@@ -190,8 +203,11 @@ def _on_input(indata, frames, t, status):
     while len(_monitor) > MONITOR_HARD_CAP:
         _monitor.popleft()
 
-    # Recording
+    # Recording — the first block after capture begins also fixes the capture
+    # start time (the ADC time of its first sample).
     if _recording:
+        if capture["t0"] is None:
+            capture["t0"] = t.inputBufferAdcTime
         _write_queue.put(mono.reshape(-1, CHANNELS).copy())
 
     # Live stream — never block the audio callback; drop the oldest if the
@@ -289,6 +305,7 @@ def _begin_capture(token, fmt, take, timestamp):
         _stop_writer = threading.Event()
         _writer_thread = threading.Thread(target=_writer, args=(_sf_file, _stop_writer), daemon=True)
         _writer_thread.start()
+        capture["t0"] = None     # set by the input callback on the first recorded block
         _recording = True
         threading.Thread(target=_reaper_start, daemon=True).start()
         print(f"Recording started — T{take}", flush=True)

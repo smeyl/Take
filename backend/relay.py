@@ -290,8 +290,10 @@ def select_track(index):
 
 @app.route("/reaper/record", methods=["POST"])
 def reaper_record():
-    # take_session.lua arms the selected track and starts the transport
-    daw.start_recording(selected_track)
+    # take_session.lua arms the selected track and starts the transport.
+    # capture_pos: backing-track position (s) the artist heard as capture began.
+    data = request.get_json(silent=True) or {}
+    daw.start_recording(selected_track, capture_pos=data.get("capture_pos"))
     return jsonify({"ok": True, "track": selected_track})
 
 

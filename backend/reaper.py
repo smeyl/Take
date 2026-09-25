@@ -86,8 +86,9 @@ def get_track_count():
     return len(get_tracks())
 
 
-def start_recording(track=0):
-    # take_session.lua arms the track and starts the transport
+def start_recording(track=0, capture_pos=None):
+    # take_session.lua arms the track and starts the transport (it places
+    # takes itself, so capture_pos isn't used)
     _write_cmd(["record", track])
     return True
 

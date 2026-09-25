@@ -17,8 +17,33 @@ stop_event = threading.Event()
 # the real track length instead of a fixed guess.
 duration = 0.0
 
+# (host time the latest block reaches the output, its track position in
+# samples, sample rate) — set by the playback callback, None when not playing.
+# Host time is PortAudio's stream clock, shared with transport.py's input
+# callback, so heard_position() can map a capture timestamp onto the track.
+_anchor = None
+
+# Pro Tools' MP3 export starts with the encoder's lead-in (1230 samples at
+# 44.1 kHz, 256 kbps CBR, measured against the session with Pro Tools 2026.4.1)
+# and writes no LAME/Info tag telling the decoder to skip it. Trimmed after
+# decoding so the track's time 0 is the session's time 0 — without it the
+# artist hears everything 28 ms late and takes are placed 28 ms late.
+MP3_LEAD_IN = 0.0279  # seconds
+
 SYNC_INTERVAL = 0.5   # seconds between drift checks
 DRIFT_LIMIT   = 2.0   # seconds before we seek
+
+
+def heard_position(host_time):
+    """Track position (seconds) the artist heard at `host_time` (PortAudio
+    stream time), or None if the backing track isn't playing."""
+    a = _anchor
+    if a is None:
+        return None
+    dac, pos, sr = a
+    if abs(host_time - dac) > 1.0:   # stale anchor: playback stalled or stopped
+        return None
+    return (pos + (host_time - dac) * sr) / sr
 
 
 def _file_changed(loaded_mtime):
@@ -46,6 +71,8 @@ def run_backing_player():
             continue
         if data.ndim == 1:
             data = data.reshape(-1, 1)
+        if BACKING_PATH.endswith(".mp3"):
+            data = data[round(MP3_LEAD_IN * samplerate):]
         total_samples = len(data)
         channels      = data.shape[1]
         duration      = total_samples / float(samplerate) if samplerate else 0.0
@@ -55,6 +82,7 @@ def run_backing_player():
 
 
 def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
+    global _anchor
     while not stop_event.is_set():
         # Wait for Reaper to start playing
         while not stop_event.is_set() and not tc.state["playing"]:
@@ -73,7 +101,9 @@ def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
         seek_event = threading.Event()
 
         def callback(outdata, frames, time_info, status):
+            global _anchor
             s     = pos[0]
+            _anchor = (time_info.outputBufferDacTime, s, samplerate)
             e     = s + frames
             chunk = data[s : min(e, total_samples)]
             outdata[: len(chunk)] = chunk
@@ -101,6 +131,7 @@ def _play_loop(data, samplerate, total_samples, channels, loaded_mtime):
                 if drift > DRIFT_LIMIT:
                     print(f"Backing track — drift {drift:.1f}s, seeking")
                     break   # stream closes; outer loop restarts at fresh TC pos
+        _anchor = None
 
 
 if __name__ == "__main__":
