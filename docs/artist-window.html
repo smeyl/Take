@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Take Artist Window</title>
+<!--
+  Design reference for the artist app's main window (JUCE), in the engineer
+  app's visual system: IBM Plex Mono, #0a0a0b background, teal #2dd4bf /
+  blue #4f8fff accents, and the artist's single-circle mark.
+
+  Window: 400 x 640. The header keeps 80px on the left for the macOS window
+  buttons, as the engineer window does.
+
+  The Engineer marker on the backing track follows the engineer's cursor /
+  timeline selection in Pro Tools, live — there is no punch button or fixed
+  punch range. In this preview it moves on its own to show that.
+
+  The controls above the window only switch the preview between the ring's
+  states (ready / countdown / recording); they are not part of the design.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --sunken: #0d0d0f;
+    --line: #1c1c1f;
+    --line-2: #2a2a2e;
+    --text: #e8e8ea;
+    --text-2: #c4c4c8;
+    --text-3: #9a9aa0;
+    --muted: #6b6b70;
+    --faint: #4d4d52;
+    --ghost: #38383c;
+    --teal: #2dd4bf;
+    --blue: #4f8fff;
+    --purple: #a78bfa;
+    --amber: #e7b23e;
+    --red: #f76464;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: #050506;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 28px 16px 40px;
+  }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ── Preview controls (not part of the design) ── */
+  .preview-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .preview-bar span { font-size: 10px; letter-spacing: 0.12em; color: var(--faint); text-transform: uppercase; }
+  .preview-bar button {
+    height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-2);
+    background: transparent; color: #8a8a90; font-size: 10.5px;
+  }
+  .preview-bar button[aria-pressed="true"] { border-color: var(--blue); background: #10203f; color: var(--blue); }
+
+  /* ── Window ── */
+  .win {
+    width: 400px; height: 640px; max-width: 100%;
+    background: var(--bg);
+    border: 1px solid #1f1f23; border-radius: 10px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* Header */
+  .hdr {
+    height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px 0 80px; border-bottom: 1px solid var(--line);
+  }
+  .logo { display: flex; align-items: center; gap: 8px; }
+  .logo-word { font-size: 13px; font-weight: 600; letter-spacing: 0.03em; }
+  .code { display: flex; align-items: baseline; gap: 8px; }
+  .code-label { font-size: 9.5px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+  .code-val { font-size: 13px; font-weight: 600; letter-spacing: 0.05em; color: #f2f2f3; }
+
+  /* Connections */
+  .conn-block { padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line); }
+  .conn-row { display: flex; align-items: center; justify-content: space-between; height: 18px; }
+  .conn-left { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .conn-name { font-size: 12.5px; color: var(--text-2); }
+  .conn-sub { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conn-state { display: flex; align-items: center; gap: 6px; }
+  .conn-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .conn-status { font-size: 11px; }
+
+  /* Record ring */
+  .ring-block { height: 132px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .ring {
+    --ring: var(--blue);
+    width: 104px; height: 104px; border-radius: 50%;
+    border: 2.5px solid var(--ring); background: var(--surface);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--ring) 7%, transparent);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .ring-main { font-size: 17px; font-weight: 700; letter-spacing: 0.04em; color: #f0f0f8; line-height: 1; }
+  .ring-take { font-size: 11px; color: color-mix(in srgb, var(--ring) 75%, transparent); }
+  .ring.counting .ring-main { font-size: 40px; color: var(--ring); }
+  .ring.counting .ring-take { display: none; }
+  .ring.rec {
+    --ring: var(--red);
+    box-shadow:
+      0 0 0 5px color-mix(in srgb, var(--red) 22%, transparent),
+      0 0 0 10px color-mix(in srgb, var(--red) 11%, transparent),
+      0 0 0 14px color-mix(in srgb, var(--red) 5%, transparent);
+  }
+
+  /* Section labels */
+  .sect-label { font-size: 10px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
+
+  /* Input meters */
+  .meters { padding: 0 20px 14px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); }
+  .meter { display: grid; grid-template-columns: 14px 1fr 48px; align-items: center; gap: 8px; height: 14px; }
+  .meter-ch { font-size: 10.5px; color: var(--muted); text-align: center; }
+  .meter-bar { position: relative; height: 6px; border-radius: 2px; background: #18181c; overflow: hidden; }
+  .meter-fill { position: absolute; inset: 0 auto 0 0; }
+  .meter-db { font-size: 10.5px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Backing track */
+  .track-block { padding: 12px 20px 0; display: flex; flex-direction: column; gap: 8px; }
+  .track-hdr { display: flex; justify-content: space-between; align-items: baseline; }
+  .track-meta { display: flex; align-items: baseline; gap: 12px; font-size: 10px; font-variant-numeric: tabular-nums; }
+  .track-time { color: var(--faint); }
+  .eng-pos { color: var(--amber); display: flex; align-items: baseline; gap: 5px; }
+  .eng-pos::before { content: ""; width: 6px; height: 6px; border-radius: 1px; background: var(--amber); transform: translateY(-1px) rotate(45deg); }
+  .track { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .sections { display: flex; height: 26px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .sec {
+    flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 9.5px; color: var(--faint); border-left: 1px solid var(--line); white-space: nowrap; overflow: hidden;
+  }
+  .sec:first-child { border-left: none; }
+  .sec.now { color: var(--blue); font-weight: 600; font-size: 10.5px; background: rgba(79,143,255,0.08); box-shadow: inset 0 0 0 1px #24324d; }
+  .wave { position: relative; height: 44px; background: var(--sunken); }
+  .wave svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* Live marker at the engineer's cursor / selection start in Pro Tools. */
+  .eng-marker {
+    position: absolute; top: 0; bottom: 0; width: 0; left: 0;
+    border-left: 1.5px solid var(--amber);
+    transition: left .35s cubic-bezier(.3,.7,.2,1);
+    pointer-events: none;
+  }
+  .eng-marker::before {
+    content: ""; position: absolute; top: 0; left: -5px;
+    border-left: 4.25px solid transparent; border-right: 4.25px solid transparent; border-top: 6px solid var(--amber);
+  }
+  .ruler { position: relative; height: 16px; background: var(--sunken); border-top: 1px solid var(--line); }
+  .ruler span { position: absolute; top: 3px; font-size: 8.5px; color: var(--ghost); transform: translateX(-50%); }
+  .ruler span:first-child { transform: none; left: 4px !important; }
+  .ruler span:last-child { transform: translateX(-100%); left: calc(100% - 4px) !important; }
+
+  /* Now / next card */
+  .now-card {
+    margin: 10px 20px 14px; height: 44px; padding: 0 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .now-left { display: flex; align-items: baseline; gap: 10px; }
+  .now-tag, .next-tag { font-size: 9px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
+  .now-name { font-size: 15px; font-weight: 600; color: var(--blue); }
+  .next { display: flex; align-items: baseline; gap: 8px; }
+  .next-name { font-size: 11px; color: var(--text-3); }
+  .next-in { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* Cue mix */
+  .cue-block { border-top: 1px solid var(--line); padding: 12px 20px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .cue-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .knob-wrap { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .knob { width: 42px; height: 42px; border-radius: 50%; border: 2px solid; background: #0e0e10; position: relative; }
+  .knob-tick { position: absolute; left: 50%; top: 5px; width: 2px; height: 13px; transform-origin: 50% 16px; }
+  .knob-lbl { font-size: 9.5px; color: var(--text-3); white-space: nowrap; }
+
+  /* Footer */
+  .foot { margin-top: auto; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+  .foot-btn {
+    width: 100%; height: 36px; border-radius: 8px; border: 1px solid var(--line-2);
+    background: transparent; color: #d4d4d6; font-size: 12px; font-weight: 500;
+  }
+  .foot-btn:hover { background: #161618; }
+
+  @media (max-width: 440px) {
+    body { padding: 16px 0 24px; }
+    .win { border-radius: 0; border-left: none; border-right: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="preview-bar" role="group" aria-label="Preview state">
+  <span>Preview</span>
+  <button type="button" data-state="ready" aria-pressed="true">Ready</button>
+  <button type="button" data-state="countdown" aria-pressed="false">Countdown</button>
+  <button type="button" data-state="rec" aria-pressed="false">Recording</button>
+</div>
+
+<main class="win" aria-label="Take artist window">
+
+  <!-- Header: mark + wordmark, session code -->
+  <header class="hdr">
+    <div class="logo">
+      <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="30" fill="rgba(45,212,191,0.15)" stroke="#2dd4bf" stroke-width="9"/>
+      </svg>
+      <span class="logo-word">TAKE</span>
+    </div>
+    <div class="code">
+      <span class="code-label">Session</span>
+      <span class="code-val">4Y · WM · 2F</span>
+    </div>
+  </header>
+
+  <!-- Connections: the engineer (via the relay) and their DAW -->
+  <section class="conn-block" aria-label="Connections">
+    <div class="conn-row">
+      <div class="conn-left"><span class="conn-name">Engineer</span></div>
+      <div class="conn-state">
+        <div class="conn-dot" style="background:var(--blue)"></div>
+        <span class="conn-status" style="color:var(--blue)">Connected</span>
+      </div>
+    </div>
+    <div class="conn-row">
+      <div class="conn-left">
+        <span class="conn-name">Pro Tools</span>
+        <span class="conn-sub" title="Track armed in Pro Tools">Lead Vocal</span>
+      </div>
+      <div class="conn-state">
+        <div class="conn-dot" id="pt-dot" style="background:var(--teal)"></div>
+        <span class="conn-status" id="pt-status" style="color:var(--teal)">Playing</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Record ring: READY / 3-2-1 / REC, with the take number -->
+  <section class="ring-block" aria-label="Recording state">
+    <div class="ring" id="ring">
+      <span class="ring-main" id="ring-main">READY</span>
+      <span class="ring-take">T4</span>
+    </div>
+  </section>
+
+  <!-- Input meters -->
+  <section class="meters" aria-label="Input level">
+    <div class="meter">
+      <span class="meter-ch">L</span>
+      <div class="meter-bar"><div class="meter-fill" id="fill-l"></div></div>
+      <span class="meter-db" id="db-l">−18 dB</span>
+    </div>
+    <div class="meter">
+      <span class="meter-ch">R</span>
+      <div class="meter-bar"><div class="meter-fill" id="fill-r"></div></div>
+      <span class="meter-db" id="db-r">−20 dB</span>
+    </div>
+  </section>
+
+  <!-- Backing track: markers, waveform, playhead, the engineer's live cursor, ruler -->
+  <section class="track-block" aria-label="Backing track">
+    <div class="track-hdr">
+      <span class="sect-label">Backing track</span>
+      <span class="track-meta">
+        <span class="eng-pos" title="Where the engineer's cursor is in Pro Tools">Engineer <span id="eng-time">1:34</span></span>
+        <span class="track-time">1:18 / 2:48</span>
+      </span>
+    </div>
+    <div class="track">
+      <div class="sections" id="sections"></div>
+      <div class="wave">
+        <svg id="wave" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="eng-marker" id="eng-marker" aria-hidden="true"></div>
+      </div>
+      <div class="ruler" id="ruler"></div>
+    </div>
+  </section>
+
+  <!-- Current / next section -->
+  <section class="now-card" aria-label="Current section">
+    <div class="now-left">
+      <span class="now-tag">Now</span>
+      <span class="now-name">Verse 2</span>
+    </div>
+    <div class="next">
+      <span class="next-tag">Next</span>
+      <span class="next-name">Bridge</span>
+      <span class="next-in">~34s</span>
+    </div>
+  </section>
+
+  <!-- Cue mix -->
+  <section class="cue-block" aria-label="Cue mix">
+    <span class="sect-label">Cue mix</span>
+    <div class="cue-grid" id="knobs"></div>
+  </section>
+
+  <footer class="foot">
+    <button type="button" class="foot-btn">End Session</button>
+  </footer>
+</main>
+
+<script>
+  // Sample session: 2:48 song, playhead in Verse 2.
+  const DURATION = 168, PLAYHEAD = 78;
+  const MARKERS = [["Intro", 0], ["Verse 1", 12], ["Chorus", 41], ["Verse 2", 70], ["Bridge", 112], ["Outro", 140]];
+
+  // Section strip: one slot per marker, the current one highlighted.
+  const sections = document.getElementById("sections");
+  let current = 0;
+  MARKERS.forEach(([, t], i) => { if (t <= PLAYHEAD) current = i; });
+  MARKERS.forEach(([name], i) => {
+    const d = document.createElement("div");
+    d.className = "sec" + (i === current ? " now" : "");
+    d.textContent = name;
+    sections.appendChild(d);
+  });
+
+  // Waveform (placeholder shape), marker lines, playhead.
+  const svg = document.getElementById("wave");
+  const W = 358, H = 44, NS = "http://www.w3.org/2000/svg";
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const x = t => (t / DURATION) * W;
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  for (let px = 1; px < W; px += 3) {
+    const t = px / W;
+    let a = (Math.sin(t * 23.4) * 0.5 + Math.cos(t * 11.7) * 0.3 + Math.sin(t * 47.1) * 0.2) * 0.5 + 0.5;
+    a = Math.min(1, Math.max(0.06, a)) * H * 0.4;
+    el("line", { x1: px, x2: px, y1: H / 2 - a, y2: H / 2 + a, stroke: "#34343f", "stroke-width": 1.4 });
+  }
+  MARKERS.slice(1).forEach(([, t]) => el("line", { x1: x(t), x2: x(t), y1: 0, y2: H, stroke: "rgba(79,143,255,0.28)", "stroke-width": 1 }));
+  el("line", { x1: x(PLAYHEAD), x2: x(PLAYHEAD), y1: 0, y2: H, stroke: "#4f8fff", "stroke-width": 1.6 });
+
+  // Ruler: five labels across the track length.
+  const ruler = document.getElementById("ruler");
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+  for (let i = 0; i <= 4; i++) {
+    const s = document.createElement("span");
+    s.style.left = `${i * 25}%`;
+    s.textContent = mmss((i / 4) * DURATION);
+    ruler.appendChild(s);
+  }
+
+  // Meters: teal to -12 dB, amber to -6 dB, red above.
+  const meterFill = (id, db) => {
+    const f = Math.max(0, Math.min(1, (db + 60) / 60));
+    const g = 48 / 60, a = 54 / 60;
+    const stops = [`var(--teal) 0`, `var(--teal) ${Math.min(f, g) / f * 100}%`];
+    if (f > g) stops.push(`var(--amber) ${g / f * 100}%`, `var(--amber) ${Math.min(f, a) / f * 100}%`);
+    if (f > a) stops.push(`var(--red) ${a / f * 100}%`, `var(--red) 100%`);
+    const el = document.getElementById(id);
+    el.style.width = `${f * 100}%`;
+    el.style.background = `linear-gradient(90deg, ${stops.join(",")})`;
+  };
+
+  // Cue knobs: same six as the engineer's cue mix, same colours.
+  const KNOBS = [["Reverb", "#2dd4bf", 30], ["Rev mix", "#2dd4bf", 20], ["Delay", "#4f8fff", 0],
+                 ["Del mix", "#4f8fff", 0], ["Comp", "#a78bfa", 15], ["Cue vol", "#e8e8ea", 80]];
+  const knobs = document.getElementById("knobs");
+  KNOBS.forEach(([label, color, value]) => {
+    const w = document.createElement("div");
+    w.className = "knob-wrap";
+    w.innerHTML = `<div class="knob" style="border-color:${color}" role="img" aria-label="${label} ${value}">
+        <div class="knob-tick" style="background:${color};transform:translateX(-50%) rotate(${-135 + value * 2.7}deg)"></div>
+      </div><span class="knob-lbl">${label}</span>`;
+    knobs.appendChild(w);
+  });
+
+  // The engineer's cursor, live from Pro Tools. Here it hops between spots
+  // the way an engineer clicks around the timeline.
+  const ENG_SPOTS = [94, 70, 112, 41, 99, 78];
+  let engI = 0;
+  const moveEngineer = () => {
+    const t = ENG_SPOTS[engI++ % ENG_SPOTS.length];
+    document.getElementById("eng-marker").style.left = `${(t / DURATION) * 100}%`;
+    document.getElementById("eng-time").textContent = mmss(t);
+  };
+  moveEngineer();
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(moveEngineer, 2600);
+
+  // Preview states.
+  const STATES = {
+    ready:     { ring: "", main: "READY", pt: ["Playing", "var(--teal)"], levels: [-18, -20] },
+    countdown: { ring: "counting", main: "3", pt: ["Recording", "var(--teal)"], levels: [-16, -17] },
+    rec:       { ring: "rec", main: "REC", pt: ["Recording", "var(--teal)"], levels: [-9, -11] },
+  };
+  const setState = name => {
+    const s = STATES[name];
+    const ring = document.getElementById("ring");
+    ring.className = "ring" + (s.ring ? " " + s.ring : "");
+    document.getElementById("ring-main").textContent = s.main;
+    document.getElementById("pt-status").textContent = s.pt[0];
+    meterFill("fill-l", s.levels[0]); meterFill("fill-r", s.levels[1]);
+    document.getElementById("db-l").textContent = `−${-s.levels[0]} dB`;
+    document.getElementById("db-r").textContent = `−${-s.levels[1]} dB`;
+    document.querySelectorAll(".preview-bar button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.state === name)));
+  };
+  document.querySelectorAll(".preview-bar button").forEach(b => b.addEventListener("click", () => setState(b.dataset.state)));
+  setState("ready");
+</script>
+</body>
+</html>
