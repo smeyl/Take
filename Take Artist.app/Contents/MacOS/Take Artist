@@ -1,14 +1,19 @@
 #!/bin/bash
 # One Terminal window: backend runs in the background (&), then the native
-# JUCE app is opened. Everything visible in a single tab.
+# JUCE app is opened. Output shows in the window and is appended to
+# logs/artist.log (PYTHONUNBUFFERED keeps it live through the pipe).
 #
-# The repo root is derived from this bundle's location (the .app lives at the
-# repo root), so the clone can be anywhere — not just ~/Desktop/Take.
+# Scripts run via an explicit /bin/bash with absolute paths, not ./script.sh,
+# so the script's execute bit or any quarantine flag on it can't block the
+# launch. The repo root is derived from this bundle's location (the .app lives
+# at the repo root), so the clone can be anywhere — not just ~/Desktop/Take.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+LOGS="$ROOT/logs"
+mkdir -p "$LOGS"
 
 osascript <<EOF
 tell application "Terminal"
-    do script "cd \"$ROOT/backend\" && ./dev_artist.sh & sleep 3 && open \"$ROOT/artist-app/Take/Builds/MacOSX/build/Debug/Take.app\""
+    do script "export PYTHONUNBUFFERED=1; (/bin/bash \"$ROOT/backend/dev_artist.sh\" 2>&1 | tee -a \"$LOGS/artist.log\") & sleep 3 && open \"$ROOT/artist-app/Take/Builds/MacOSX/build/Debug/Take.app\" 2>&1 | tee -a \"$LOGS/artist.log\""
 end tell
 EOF
 

@@ -1,14 +1,20 @@
 #!/bin/bash
 # One Terminal window: backend runs in the background (&), then the Electron
-# UI runs in the foreground. Everything visible in a single tab.
+# UI runs in the foreground. Output shows in the window and is appended to
+# logs/engineer.log (backend) and logs/electron.log (UI); PYTHONUNBUFFERED
+# keeps the backend's output live through the pipe.
 #
-# The repo root is derived from this bundle's location (the .app lives at the
-# repo root), so the clone can be anywhere — not just ~/Desktop/Take.
+# Scripts run via an explicit /bin/bash with absolute paths, not ./script.sh,
+# so the script's execute bit or any quarantine flag on it can't block the
+# launch. The repo root is derived from this bundle's location (the .app lives
+# at the repo root), so the clone can be anywhere — not just ~/Desktop/Take.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+LOGS="$ROOT/logs"
+mkdir -p "$LOGS"
 
 osascript <<EOF
 tell application "Terminal"
-    do script "cd \"$ROOT/backend\" && ./dev_engineer.sh & sleep 5 && cd \"$ROOT/engineer-app\" && npm start"
+    do script "export PYTHONUNBUFFERED=1; (/bin/bash \"$ROOT/backend/dev_engineer.sh\" 2>&1 | tee -a \"$LOGS/engineer.log\") & sleep 5 && cd \"$ROOT/engineer-app\" && npm start 2>&1 | tee -a \"$LOGS/electron.log\""
 end tell
 EOF
 
