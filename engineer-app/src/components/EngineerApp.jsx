@@ -36,6 +36,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
   const [streamQ, setStreamQ]       = useState("PCM16");
   const [syncFmt, setSyncFmt]       = useState("WAV 24");
   const [receivedTakes, setReceivedTakes] = useState([]);
+  // DAW recordings the artist didn't capture (from the relay), and the
+  // newest one the engineer has dismissed.
+  const [missed, setMissed]         = useState([]);
+  const [missedSeen, setMissedSeen] = useState(0);
   const [tracks, setTracks]         = useState([]);
   const [autoSync, setAutoSync]     = useState(true);
   // Pre-roll countdown before capture actually starts (null = not counting).
@@ -206,6 +210,10 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
         const r = await fetch(`${FILE_RECEIVER}/takes`);
         if (r.ok) setReceivedTakes(await r.json());
       } catch {}
+      try {
+        const r = await fetch(`${RELAY}/takes/missed`);
+        if (r.ok) setMissed(await r.json());
+      } catch {}
     };
 
     const pollSession = () => Promise.all([checkArtist(), checkDaw()]);
@@ -258,6 +266,9 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
     const ext = received ? received.name.split(".").pop().toUpperCase() : null;
     return { n, name, s: status, file: received ? received.name : null, ext };
   }).reverse();  // newest first
+
+  const lastMissed = missed.length ? missed[missed.length - 1] : null;
+  const showMissed = lastMissed && lastMissed.id > missedSeen;
 
   const displayCode = sessionCode
     ? `${sessionCode.slice(0, 2)} · ${sessionCode.slice(2, 4)} · ${sessionCode.slice(4, 6)}`
@@ -409,6 +420,15 @@ export default function EngineerApp({ cue, setCue, sessionCode, onBack }) {
       {/* Takes */}
       <div className="takes-block">
         <div className="takes-hdr"><span className="sect-label">Takes</span></div>
+        {showMissed && (
+          <div className="missed" role="alert">
+            <div className="missed-text">
+              <span className="missed-title">Take not captured · {lastMissed.at}</span>
+              <span className="missed-why">{lastMissed.reason}. Only the streamed recording is on the track — record it again.</span>
+            </div>
+            <button className="missed-x" aria-label="Dismiss" onClick={() => setMissedSeen(lastMissed.id)}>×</button>
+          </div>
+        )}
         <div className="takes-list">
           {takes.length === 0 && <div className="take-empty">No takes yet</div>}
           {takes.map(t => {

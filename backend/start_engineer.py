@@ -235,11 +235,25 @@ if __name__ == "__main__":
 
         display_code = f"{code[0:2]} · {code[2:4]} · {code[4:6]}"
         print(f"\nSession code: {display_code}\n")
+
+        # Record/Stop in the DAW's own transport drives the artist's capture.
+        # Started before the artist joins: the relay knows them the moment
+        # they join, so a Record pressed right after is followed at once, and
+        # one pressed before they've joined is reported as not captured.
+        watcher = threading.Thread(target=record_watcher.run, args=(stop_event,),
+                                   name="record-watcher", daemon=True)
+        watcher.start()
+        # Takes can arrive before this session's artist has joined — e.g. one
+        # the artist was capturing while this backend restarted — so receive
+        # from the start too.
+        receiver_thread = threading.Thread(target=run_receiver, name="http-receiver", daemon=True)
+        receiver_thread.start()
+
         print("Waiting for artist to join...")
 
         artist_ip = None
         while artist_ip is None:
-            time.sleep(2)
+            time.sleep(0.25)
             try:
                 r = requests.get(f"{RELAY_URL}/session/{code}", timeout=5)
                 if r.status_code == 200:
@@ -264,7 +278,6 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTERM, lambda sig, frame: shutdown())
 
         threads = [
-            threading.Thread(target=run_receiver, name="http-receiver", daemon=True),
             threading.Thread(target=bounce.run_bounce_server, name="bounce-server", daemon=True),
             threading.Thread(target=run_stream_receiver, name="stream-receiver", daemon=True),
             threading.Thread(
@@ -276,12 +289,10 @@ if __name__ == "__main__":
             ),
             threading.Thread(target=timecode.sender, args=(artist_ip, stop_event),
                              name="timecode", daemon=True),
-            # Record/Stop in Reaper's own transport drives the artist's capture.
-            threading.Thread(target=record_watcher.run, args=(stop_event,),
-                             name="record-watcher", daemon=True),
         ]
         for t in threads:
             t.start()
+        threads += [watcher, receiver_thread]
 
         print("Take — engineer ready")
         print(f"  File receiver  : 0.0.0.0:{PORT} → {INCOMING_PATH}/")

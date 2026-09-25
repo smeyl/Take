@@ -162,6 +162,23 @@ DAW_INPUT_OFFSET_MS = float(os.environ.get("TAKE_DAW_INPUT_OFFSET_MS", "47"))
 _receiver = {"ms": None}   # stream receiver delay, reported by start_engineer.py
 
 
+# DAW recordings the artist didn't capture (record_watcher.py reports them);
+# the engineer app shows the latest as a warning.
+_missed_takes = []
+
+
+@app.route("/takes/missed", methods=["GET", "POST"])
+def missed_takes():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        _missed_takes.append({"id": len(_missed_takes) + 1,
+                              "at": str(data.get("at", "")),
+                              "reason": str(data.get("reason", ""))})
+        log(f"Take NOT captured: {_missed_takes[-1]['reason']}")
+        return jsonify({"ok": True})
+    return jsonify(_missed_takes)
+
+
 @app.route("/latency/receiver", methods=["POST"])
 def set_receiver_latency():
     data = request.get_json(silent=True) or {}
