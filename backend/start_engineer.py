@@ -4,8 +4,9 @@ import socket
 import sys
 import threading
 import time
+import numpy as np
 import requests
-import pyaudio
+import sounddevice as sd
 
 import bounce
 import engineer  # wires up receiver.on_file_received as a side effect
@@ -13,16 +14,26 @@ import ports
 import daw
 import record_watcher
 import stream_sender
+from resampler import Resampler
 import timecode
 from engineer import run_receiver, INCOMING_PATH, PORT
 
 RELAY_URL = "http://127.0.0.1:5010"
 TRANSPORT_PORT = 5004
 STREAM_PORT = 5002
-CHUNK = 1024
-RATE = 44100
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
+STREAM_RATE = 44100   # the artist's live stream wire format
+MAX_PACKET = 4 * 1024 + 1  # 1 header byte + 1024 float32 samples (largest the sender makes)
+# Audio held in reserve against network jitter before the artist's stream is
+# played to the DAW. This is a fixed part of the monitoring delay: bigger
+# rides out a worse connection, smaller is tighter.
+STREAM_BUFFER_MS = float(os.environ.get("TAKE_STREAM_BUFFER_MS", "40"))
+# How far past the reserve the buffer may fill (a packet plus an audio block
+# arriving together) before the excess is dropped back down to the reserve.
+STREAM_EXCESS_MS = 15
+# Once a second the average depth is checked: off the reserve by more than
+# this (audio lost upstream, or clock drift between the two machines) and it
+# is put back — silence added or audio dropped — so the delay stays fixed.
+STREAM_TOLERANCE_MS = 8
 
 stop_event = threading.Event()
 
@@ -63,11 +74,11 @@ def get_local_ip():
         return s.getsockname()[0]
 
 
-def _find_output_device(audio, wanted):
+def _find_output_device(wanted):
     """Output device named exactly `wanted`, else the first whose name
     contains it. Returns (index, name) or (None, None)."""
-    outputs = [(i, audio.get_device_info_by_index(i)) for i in range(audio.get_device_count())]
-    outputs = [(i, d["name"]) for i, d in outputs if d.get("maxOutputChannels", 0) > 0]
+    outputs = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+               if d["max_output_channels"] > 0]
     for i, name in outputs:
         if name == wanted:
             return i, name
@@ -75,6 +86,55 @@ def _find_output_device(audio, wanted):
         if wanted in name:
             return i, name
     return None, None
+
+
+class _JitterBuffer:
+    """Artist audio waiting to be played to the DAW, kept at a fixed depth so
+    the delay it adds is fixed: it starts playing once `target` samples are
+    in; a burst that fills it past `limit` (backlog after a network stall or
+    at startup) is dropped back to `target` at once; running dry plays
+    silence and waits for `target` again. Slower shifts — audio that never
+    arrived, or one machine's clock running faster — are corrected once a
+    `window` of playback when the average depth is off by over `tolerance`."""
+
+    def __init__(self, target, limit, tolerance, window):
+        self.target, self.limit = target, limit
+        self.tolerance, self.window = tolerance, window
+        self.buf = np.zeros(0, dtype=np.float32)
+        self.playing = False
+        self.depth_sum = self.pulls = self.played = 0
+        self.lock = threading.Lock()
+
+    def push(self, x):
+        with self.lock:
+            self.buf = np.concatenate([self.buf, x])
+            if len(self.buf) > self.limit:
+                self.buf = self.buf[-self.target:]
+
+    def pull(self, out):
+        with self.lock:
+            if not self.playing and len(self.buf) >= self.target:
+                self.playing = True
+            n = min(len(out), len(self.buf)) if self.playing else 0
+            out[:n] = self.buf[:n]
+            out[n:] = 0
+            self.buf = self.buf[n:]
+            if self.playing and n < len(out):
+                self.playing = False
+            if not self.playing:
+                self.depth_sum = self.pulls = self.played = 0
+                return
+            self.depth_sum += len(self.buf)
+            self.pulls += 1
+            self.played += len(out)
+            if self.played >= self.window:
+                # Depth just after a pull averages the reserve in steady state.
+                off = round(self.depth_sum / self.pulls) - self.target
+                if off < -self.tolerance:
+                    self.buf = np.concatenate([np.zeros(-off, dtype=np.float32), self.buf])
+                elif off > self.tolerance:
+                    self.buf = self.buf[off:]
+                self.depth_sum = self.pulls = self.played = 0
 
 
 def run_stream_receiver():
@@ -87,25 +147,35 @@ def run_stream_receiver():
               flush=True)
         return
     sock.settimeout(1.0)
-    audio = pyaudio.PyAudio()
 
     wanted = daw.stream_device()
-    dev_index, dev_name = _find_output_device(audio, wanted)
+    dev_index, dev_name = _find_output_device(wanted)
 
     # The artist's mic goes to the DAW's virtual input device ONLY — the DAW
     # records/monitors it from there. Never open the default output here: that
     # would play the mic directly on the engineer's speakers on top of the
     # DAW's monitoring.
-    dev_stream = None
+    stream = jitter = resampler = None
     if dev_index is not None:
         try:
-            dev_stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                                    output=True, output_device_index=dev_index,
-                                    frames_per_buffer=CHUNK)
-            print(f"Stream receiver: artist mic → {dev_name} ({daw.NAME} input)")
+            # Played by a callback at the device's own rate (no blocking
+            # writes, whose buffering grows with every network hiccup).
+            rate = int(sd.query_devices(dev_index)["default_samplerate"])
+            jitter = _JitterBuffer(round(STREAM_BUFFER_MS / 1000 * rate),
+                                   round((STREAM_BUFFER_MS + STREAM_EXCESS_MS) / 1000 * rate),
+                                   round(STREAM_TOLERANCE_MS / 1000 * rate), rate)
+            resampler = Resampler(STREAM_RATE, rate)
+            stream = sd.OutputStream(device=dev_index, samplerate=rate, channels=1,
+                                     dtype="float32", blocksize=128, latency="low",
+                                     callback=lambda out, frames, t, st: jitter.pull(out[:, 0]))
+            stream.start()
+            print(f"Stream receiver: artist mic → {dev_name} ({daw.NAME} input) @ "
+                  f"{rate} Hz, {STREAM_BUFFER_MS:.0f} ms jitter buffer + "
+                  f"{stream.latency * 1000:.1f} ms output", flush=True)
         except Exception as e:
+            stream = None
             print(f"Stream receiver: opening {dev_name} failed ({e})")
-    if dev_stream is None:
+    if stream is None:
         print(f"Stream receiver: no output device matching '{wanted}' — artist "
               f"mic will be received but NOT fed to {daw.NAME}. Set "
               f"TAKE_STREAM_DEVICE to the virtual device {daw.NAME} records "
@@ -114,17 +184,16 @@ def run_stream_receiver():
     try:
         while not stop_event.is_set():
             try:
-                # Largest packet: 1 header byte + CHUNK samples of float32
-                data, _ = sock.recvfrom(CHUNK * 4 + 1)
+                data, _ = sock.recvfrom(MAX_PACKET)
             except socket.timeout:
                 continue
-            if dev_stream:
-                dev_stream.write(stream_sender.decode_to_int16(data))
+            if stream:
+                pcm = np.frombuffer(stream_sender.decode_to_int16(data), dtype=np.int16)
+                jitter.push(resampler.process(pcm.astype(np.float32) / 32768.0))
     finally:
-        if dev_stream:
-            dev_stream.stop_stream()
-            dev_stream.close()
-        audio.terminate()
+        if stream:
+            stream.stop()
+            stream.close()
         sock.close()
 
 

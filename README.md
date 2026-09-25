@@ -114,7 +114,7 @@ Take only acts when a take arrives, and only on the track that was armed:
 
 ### Live stream into Pro Tools
 
-While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one.
+While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one. The stream is held in a fixed 40 ms buffer against network jitter before it's played, so its delay stays constant; set `TAKE_STREAM_BUFFER_MS` to change it (more for a shaky connection, less for tighter monitoring).
 
 The device must **not** be Pro Tools' Playback Engine device itself: Pro Tools takes that device over, and audio other apps send to it never arrives (tested with Audio Bridge 16 as the engine — Pro Tools recorded digital silence). Instead, use a Playback Engine that *includes* Audio Bridge 2-A as inputs:
 

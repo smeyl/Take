@@ -14,6 +14,7 @@ import sounddevice as sd
 import soundfile as sf
 import backing_player
 import cue_receiver
+from resampler import Resampler
 
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
@@ -90,31 +91,6 @@ def _reaper_stop():
         pass
 
 
-class _Resampler:
-    """Streaming linear-interpolation resampler (for the monitoring-only live
-    stream; the recording is written at the device's native rate)."""
-
-    def __init__(self, src_rate, dst_rate):
-        self.step = src_rate / dst_rate
-        self.buf = np.zeros(0, dtype=np.float32)
-        self.t = 0.0
-
-    def process(self, x):
-        self.buf = np.concatenate([self.buf, x])
-        if len(self.buf) < 2:
-            return np.zeros(0, dtype=np.float32)
-        n = int((len(self.buf) - 1 - self.t) / self.step) + 1
-        idx = self.t + np.arange(n) * self.step
-        i0 = idx.astype(np.int64)
-        frac = (idx - i0).astype(np.float32)
-        i1 = np.minimum(i0 + 1, len(self.buf) - 1)
-        out = self.buf[i0] * (1.0 - frac) + self.buf[i1] * frac
-        nxt = self.t + n * self.step
-        drop = int(nxt)
-        self.buf, self.t = self.buf[drop:], nxt - drop
-        return out
-
-
 def run_stream_from_transport():
     """Send the mic to the engineer: native-rate blocks from the input callback,
     resampled to 44.1 kHz int16 and packetised (the stream's wire format)."""
@@ -125,7 +101,7 @@ def run_stream_from_transport():
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
     while not _audio_ready.wait(1.0):
         pass
-    resampler = _Resampler(audio["rate"], STREAM_RATE)
+    resampler = Resampler(audio["rate"], STREAM_RATE)
     pending = np.zeros(0, dtype=np.float32)
     while True:
         try:
