@@ -3,6 +3,11 @@ const path = require('path')
 
 const DEV = process.env.NODE_ENV === 'development'
 
+// Electron's own name for the app (app menu's About/Hide/Quit items, userData
+// folder). The Dock/menu-bar name comes from the running bundle instead — see
+// scripts/name-electron.js.
+app.setName(require('./package.json').productName)
+
 let mainWin = null
 let cueWin = null
 let lastCue = null  // latest cue values, handed to the popout when it opens
@@ -90,5 +95,9 @@ ipcMain.on('cue:changed', (e, cue) => {
   }
 })
 
+// The Dock icon and name come from the dev Electron.app bundle itself, which
+// scripts/name-electron.js gives Take's engineer iconset (postinstall). Don't
+// set app.dock.setIcon() here: a runtime image is drawn edge to edge, without
+// the standard icon treatment, so it renders larger than every other icon.
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

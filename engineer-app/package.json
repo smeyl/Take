@@ -1,12 +1,14 @@
 {
   "name": "take-engineer",
+  "productName": "Take Engineer",
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "electron": "NODE_ENV=development electron .",
-    "start": "concurrently \"npm run dev\" \"npm run electron\""
+    "start": "concurrently \"npm run dev\" \"npm run electron\"",
+    "postinstall": "node scripts/name-electron.js"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",
