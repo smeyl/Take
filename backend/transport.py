@@ -1,3 +1,4 @@
+import collections
 import logging
 import math
 import os
@@ -8,8 +9,8 @@ from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import numpy as np
-import pyaudio
 import requests
+import sounddevice as sd
 import soundfile as sf
 import backing_player
 import cue_receiver
@@ -19,8 +20,14 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 # Data lives at the repo root (sibling of this backend/ folder), not inside it.
 RECORDINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
 PORT = 5004
-RATE = 44100
+STREAM_RATE = 44100   # the live stream to the engineer is always 44.1 kHz int16
+STREAM_CHUNK = 256    # samples per stream packet (5.8 ms)
+BLOCK = 128           # audio callback block: ~2.7 ms at 48 kHz
 CHANNELS = 1
+# Optional device overrides (name, or part of it) — e.g. an audio interface.
+# Default: the system's input/output devices.
+INPUT_DEVICE = os.environ.get("TAKE_INPUT_DEVICE") or None
+OUTPUT_DEVICE = os.environ.get("TAKE_OUTPUT_DEVICE") or None
 _SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 
 # Relay on the engineer's machine — set by start_artist.py once the session is
@@ -71,20 +78,53 @@ def _reaper_stop():
         pass
 
 
+class _Resampler:
+    """Streaming linear-interpolation resampler (for the monitoring-only live
+    stream; the recording is written at the device's native rate)."""
+
+    def __init__(self, src_rate, dst_rate):
+        self.step = src_rate / dst_rate
+        self.buf = np.zeros(0, dtype=np.float32)
+        self.t = 0.0
+
+    def process(self, x):
+        self.buf = np.concatenate([self.buf, x])
+        if len(self.buf) < 2:
+            return np.zeros(0, dtype=np.float32)
+        n = int((len(self.buf) - 1 - self.t) / self.step) + 1
+        idx = self.t + np.arange(n) * self.step
+        i0 = idx.astype(np.int64)
+        frac = (idx - i0).astype(np.float32)
+        i1 = np.minimum(i0 + 1, len(self.buf) - 1)
+        out = self.buf[i0] * (1.0 - frac) + self.buf[i1] * frac
+        nxt = self.t + n * self.step
+        drop = int(nxt)
+        self.buf, self.t = self.buf[drop:], nxt - drop
+        return out
+
+
 def run_stream_from_transport():
-    """Read mic chunks from the shared _stream_queue — avoids opening a second input stream."""
+    """Send the mic to the engineer: native-rate blocks from the input callback,
+    resampled to 44.1 kHz int16 and packetised (the stream's wire format)."""
     import stream_sender
     import watcher
     STREAM_PORT = 5002
     import socket as _socket
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    while not _audio_ready.wait(1.0):
+        pass
+    resampler = _Resampler(audio["rate"], STREAM_RATE)
+    pending = np.zeros(0, dtype=np.float32)
     while True:
         try:
-            chunk = _stream_queue.get(timeout=1.0)
+            block = _stream_queue.get(timeout=1.0)
         except queue.Empty:
             continue
-        data = stream_sender.encode(chunk.tobytes())
-        sock.sendto(data, (watcher.TARGET_IP, STREAM_PORT))
+        pending = np.concatenate([pending, resampler.process(block)])
+        while len(pending) >= STREAM_CHUNK:
+            chunk, pending = pending[:STREAM_CHUNK], pending[STREAM_CHUNK:]
+            pcm = (np.clip(chunk, -1.0, 1.0) * 32767.0).astype(np.int16)
+            sock.sendto(stream_sender.encode(pcm.tobytes()), (watcher.TARGET_IP, STREAM_PORT))
 
 
 def _writer(sf_file, stop_evt):
@@ -96,84 +136,127 @@ def _writer(sf_file, stop_evt):
             continue
 
 
-def _audio_thread():
-    """Single PyAudio input stream: updates levels always, feeds recorder when active."""
-    CHUNK = 1024
-    pa = pyaudio.PyAudio()
-    stream = None
-    for ch in (2, 1):
+# ── Audio engine ──────────────────────────────────────────────────────────────
+# Two callback streams at the input device's native rate: the mic input, and
+# the cue-mix monitor output. They are separate streams on purpose — opening
+# one full-duplex stream across two devices (built-in mic + headphones) makes
+# PortAudio add ~85 ms of buffering to bridge their clocks. Blocking I/O and a
+# sample-rate mismatch (44.1 kHz streams on 48 kHz hardware) cost far more.
+
+audio = {"rate": None, "input_latency": 0.0, "output_latency": 0.0,
+         "underruns": 0, "trimmed": 0}
+_audio_ready = threading.Event()
+# Mic blocks waiting for the output callback. The input callback arrives in
+# bursts (the hardware delivers 512 frames = 4 blocks at once) while the output
+# pulls one block every ~2.7 ms, so this buffer must hold a whole burst. The
+# output callback keeps it minimal: if it never ran below 2 blocks over the
+# last ~0.5 s, it drops one (clock drift between the two devices), and an
+# empty buffer plays one block of silence (which re-adds a block of cushion).
+_monitor = collections.deque()
+MONITOR_HARD_CAP = 32              # memory bound only; normal depth is 0-5 blocks
+TRIM_WINDOW = 200                  # output callbacks (~0.5 s at 48 kHz / 128)
+_trim = {"min": MONITOR_HARD_CAP, "n": 0}
+_level_window = collections.deque(maxlen=16)   # ~40 ms of per-block mean squares
+
+
+def _find_device(name, kind):
+    """Device named exactly `name`, else the first whose name contains it."""
+    if not name:
+        return None
+    devices = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+               if d[f"max_{kind}_channels"] > 0]
+    for i, dev_name in devices:
+        if dev_name == name:
+            return i
+    for i, dev_name in devices:
+        if name.lower() in dev_name.lower():
+            return i
+    print(f"[transport] no {kind} device matching '{name}' — using the default", flush=True)
+    return None
+
+
+def _on_input(indata, frames, t, status):
+    mono = indata.mean(axis=1) if indata.shape[1] > 1 else indata[:, 0].copy()
+
+    # Meters — stereo inputs show L/R, mono shows the same on both.
+    _level_window.append(np.mean(indata[:, :2] ** 2, axis=0))
+    ms = np.mean(np.array(_level_window), axis=0)
+    l_ms, r_ms = (ms[0], ms[1]) if ms.shape[0] > 1 else (ms[0], ms[0])
+    levels["l"] = max(-60.0, min(0.0, 10.0 * math.log10(l_ms + 1e-12)))
+    levels["r"] = max(-60.0, min(0.0, 10.0 * math.log10(r_ms + 1e-12)))
+
+    # Monitor — straight to the output callback (see _monitor above).
+    _monitor.append(mono)
+    while len(_monitor) > MONITOR_HARD_CAP:
+        _monitor.popleft()
+
+    # Recording
+    if _recording:
+        _write_queue.put(mono.reshape(-1, CHANNELS).copy())
+
+    # Live stream — never block the audio callback; drop the oldest if the
+    # sender thread stalls.
+    try:
+        _stream_queue.put_nowait(mono)
+    except queue.Full:
         try:
-            stream = pa.open(format=pyaudio.paInt16, channels=ch,
-                             rate=RATE, input=True, frames_per_buffer=CHUNK)
-            break
-        except Exception:
-            continue
-    if stream is None:
+            _stream_queue.get_nowait()
+            _stream_queue.put_nowait(mono)
+        except (queue.Empty, queue.Full):
+            pass
+
+
+def _on_output(outdata, frames, t, status):
+    depth = len(_monitor)
+    _trim["min"] = min(_trim["min"], depth)
+    _trim["n"] += 1
+    if _trim["n"] >= TRIM_WINDOW:
+        if _trim["min"] >= 2 and _monitor:
+            _monitor.popleft()          # standing excess latency — drop one block
+            audio["trimmed"] += 1
+        _trim.update(min=MONITOR_HARD_CAP, n=0)
+    if _monitor:
+        block = _monitor.popleft()
+        if len(block) == frames:
+            outdata[:, 0] = cue_receiver.process(block, audio["rate"])
+            return
+    else:
+        audio["underruns"] += 1
+    outdata.fill(0)
+
+
+def _audio_thread():
+    """Start the input and monitor-output callback streams and keep them open."""
+    in_dev = _find_device(INPUT_DEVICE, "input")
+    out_dev = _find_device(OUTPUT_DEVICE, "output")
+    try:
+        info = sd.query_devices(in_dev if in_dev is not None else sd.default.device[0])
+        rate = int(info["default_samplerate"])
+        channels = min(2, int(info["max_input_channels"])) or 1
+        inp = sd.InputStream(device=in_dev, samplerate=rate, channels=channels, blocksize=BLOCK,
+                             dtype="float32", latency="low", callback=_on_input)
+    except Exception as e:
         # Without this stream there are no meters, no mic stream to the
         # engineer, and nothing to record — never die silently.
-        print("FATAL: could not open any audio input device — check microphone "
+        print(f"FATAL: could not open the audio input ({e}) — check microphone "
               "permissions (System Settings → Privacy) and that an input device "
               "exists. No levels, no stream, no recording.", flush=True)
-        pa.terminate()
         return
-
-    cue_out = None
+    out = None
     try:
-        cue_out = pa.open(format=pyaudio.paInt16, channels=CHANNELS, rate=RATE,
-                          output=True, frames_per_buffer=CHUNK)
+        out = sd.OutputStream(device=out_dev, samplerate=rate, channels=1, blocksize=BLOCK,
+                              dtype="float32", latency="low", callback=_on_output)
     except Exception as e:
-        print(f"[transport] cue output open failed: {e}", flush=True)
-
-    while True:
-        try:
-            raw = stream.read(CHUNK, exception_on_overflow=False)
-        except OSError:
-            break
-
-        # Mono int16 — shared by cue, stream, and recording paths
-        mono = (np.frombuffer(raw, dtype=np.int16) if ch == 1
-                else np.frombuffer(raw, dtype=np.int16).reshape(-1, ch).mean(axis=1).astype(np.int16))
-
-        # Meter — always running (uses raw pre-downmix for true stereo L/R)
-        raw_f = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        if ch >= 2:
-            lr = raw_f.reshape(-1, ch)
-            l_rms = float(np.sqrt(np.mean(lr[:, 0] ** 2)))
-            r_rms = float(np.sqrt(np.mean(lr[:, 1] ** 2)))
-        else:
-            l_rms = r_rms = float(np.sqrt(np.mean(raw_f ** 2)))
-        levels["l"] = max(-60.0, min(0.0, 20.0 * math.log10(l_rms + 1e-9)))
-        levels["r"] = max(-60.0, min(0.0, 20.0 * math.log10(r_rms + 1e-9)))
-
-        # Direct cue monitoring — no UDP round-trip
-        if cue_out is not None:
-            try:
-                cue_out.write(cue_receiver.process_audio(mono).tobytes())
-            except Exception:
-                pass
-
-        # Recording feed — only when active
-        if _recording:
-            chunk = mono.astype(np.float32) / 32768.0
-            _write_queue.put(chunk.reshape(-1, CHANNELS).copy())
-
-        # Stream feed — consumed by run_stream_from_transport(). Never block
-        # the audio thread: if the consumer stalls, drop the oldest chunk.
-        try:
-            _stream_queue.put_nowait(mono)
-        except queue.Full:
-            try:
-                _stream_queue.get_nowait()
-                _stream_queue.put_nowait(mono)
-            except (queue.Empty, queue.Full):
-                pass
-
-    stream.stop_stream()
-    stream.close()
-    if cue_out is not None:
-        cue_out.stop_stream()
-        cue_out.close()
-    pa.terminate()
+        print(f"[transport] cue monitor output failed ({e}) — no local monitoring", flush=True)
+    audio.update(rate=rate, input_latency=inp.latency,
+                 output_latency=out.latency if out is not None else 0.0)
+    _audio_ready.set()
+    inp.start()
+    if out is not None:
+        out.start()
+    print(f"[transport] audio: {info['name']} @ {rate} Hz, input {inp.latency * 1000:.1f} ms, "
+          f"monitor output {audio['output_latency'] * 1000:.1f} ms", flush=True)
+    threading.Event().wait()   # keep the streams alive for the process lifetime
 
 
 threading.Thread(target=_audio_thread, daemon=True).start()
@@ -182,14 +265,14 @@ threading.Thread(target=_audio_thread, daemon=True).start()
 def _open_take_file(fmt, take, timestamp):
     if fmt == "FLAC":
         path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.flac")
-        return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS,
+        return sf.SoundFile(path, mode="w", samplerate=audio["rate"], channels=CHANNELS,
                             format="FLAC", subtype="PCM_24")
     if fmt == "WAV32f":
         path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.wav")
-        return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="FLOAT")
+        return sf.SoundFile(path, mode="w", samplerate=audio["rate"], channels=CHANNELS, subtype="FLOAT")
     # WAV24 (default)
     path = os.path.join(RECORDINGS_PATH, f"T{take}_{timestamp}.wav")
-    return sf.SoundFile(path, mode="w", samplerate=RATE, channels=CHANNELS, subtype="PCM_24")
+    return sf.SoundFile(path, mode="w", samplerate=audio["rate"], channels=CHANNELS, subtype="PCM_24")
 
 
 def _begin_capture(token, fmt, take, timestamp):

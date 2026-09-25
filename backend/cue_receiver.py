@@ -5,8 +5,6 @@ import numpy as np
 from pedalboard import Pedalboard, Reverb, Delay, Compressor
 
 PORT = 5003
-CHUNK = 1024
-RATE = 44100
 
 params = {"reverb": 0, "reverbMix": 0, "delay": 0, "delayMix": 0, "compression": 0, "volume": 100}
 stop_event = threading.Event()
@@ -17,7 +15,10 @@ _reverb     = Reverb(room_size=0.1, wet_level=0.0, dry_level=1.0, damping=0.5, f
 _delay      = Delay(delay_seconds=0.01, feedback=0.3, mix=0.0)
 _board      = Pedalboard([_compressor, _reverb, _delay])
 
-def process_audio(samples):
+def process(block, sample_rate):
+    """Run one block of mono float32 audio through the cue mix and return it.
+    Called from the artist's output audio callback, at the device's native
+    rate, a few ms of audio at a time."""
     # Update effect attributes in-place — preserves internal buffer state across chunks
     _compressor.threshold_db = -40.0 + (params["compression"] / 100.0) * 40.0
     _compressor.ratio        = 4.0
@@ -34,15 +35,9 @@ def process_audio(samples):
     _delay.feedback      = 0.3
     _delay.mix           = params["delayMix"] / 100.0
 
-    audio_2d  = samples.astype(np.float32) / 32768.0
-    audio_2d  = audio_2d.reshape(1, -1)
-    processed = _board(audio_2d, sample_rate=RATE, reset=False)  # (1, n_samples) float32
-    processed = np.clip(processed, -1.0, 1.0)  # hard limit pedalboard output before volume
-    result    = processed[0]
-    result   *= params["volume"] / 100.0        # vol_gain: 0.0–1.0, never amplifies above unity
-    out = (result * 32767.0).astype(np.int16)
-
-    return out
+    processed = _board(block.reshape(1, -1), sample_rate=sample_rate, reset=False)
+    processed = np.clip(processed[0], -1.0, 1.0)  # hard limit pedalboard output before volume
+    return processed * (params["volume"] / 100.0)  # 0.0–1.0, never amplifies above unity
 
 
 # ── Network listener ──────────────────────────────────────────────────────────

@@ -304,8 +304,9 @@ def _track_clips(e, track_name):
 def _import(e, filepath):
     """Import into the clip list and return the new clip ids. Pro Tools only
     accepts CopyAudio for a file already in the session's format and only
-    ConvertAudio for one that isn't (the artist records 44.1 kHz), answering
-    the wrong one with "No audio files were imported" — so try both. That same
+    ConvertAudio for one that isn't (the artist records at their audio
+    device's rate), answering the wrong one with "No audio files were
+    imported" — so try both. That same
     error also came back intermittently for files that import fine moments
     later, so the pair is tried twice, half a second apart."""
     errors = []
