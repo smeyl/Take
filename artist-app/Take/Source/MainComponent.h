@@ -214,6 +214,10 @@ public:
     {
         if (! manualMode && manualToggleLabel.getBounds().contains (e.getPosition()))
             setManualMode (true);
+       #if JUCE_MAC
+        else if (e.getPosition().y < 44)   // where the title bar would be: move the window
+            takeDragWindowFrom (*this);
+       #endif
     }
 
     // juce::TextEditor::Listener

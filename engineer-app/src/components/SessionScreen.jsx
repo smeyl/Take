@@ -87,11 +87,14 @@ export default function SessionScreen({ onStart }) {
     : isLoading ? "· · · · · ·" : "— — —";
 
   return (
+    // The whole screen moves the window (it has no title bar, like the main
+    // window's header); the controls opt out so they stay clickable.
     <div style={{
       width: "100%", height: "100%",
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       background: C.bg,
+      WebkitAppRegion: "drag",
     }}>
       <div style={{ width: 320, display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div className="role-title">T<span>ake</span></div>
@@ -118,6 +121,7 @@ export default function SessionScreen({ onStart }) {
               fontSize: 10, color: creating ? C.muted : C.blue,
               cursor: creating ? "default" : "pointer",
               letterSpacing: "0.05em", userSelect: "none",
+              WebkitAppRegion: "no-drag",
             }}
             onClick={creating ? undefined : createNewCode}
           >
@@ -136,6 +140,7 @@ export default function SessionScreen({ onStart }) {
             fontFamily: "'IBM Plex Mono', monospace",
             fontSize: 9, color: C.dim, textAlign: "center",
             marginBottom: 16, userSelect: "text",
+            WebkitAppRegion: "no-drag",
           }}>
             relay {engineerIP}
           </div>
@@ -152,7 +157,7 @@ export default function SessionScreen({ onStart }) {
 
         <button
           className="role-btn engineer"
-          style={{ width: "100%", opacity: rawCode ? 1 : 0.4 }}
+          style={{ width: "100%", opacity: rawCode ? 1 : 0.4, WebkitAppRegion: "no-drag" }}
           disabled={!rawCode}
           onClick={() => {
             // Design reference: main-window.html is 380x640.

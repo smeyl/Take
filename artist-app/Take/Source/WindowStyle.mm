@@ -39,3 +39,15 @@ void takeStyleWindow (void* nativeView)
         [[NSNotificationCenter defaultCenter] addObserverForName: n object: window queue: nil
                                                       usingBlock: ^(NSNotification*) { placeWindowButtons (window); }];
 }
+
+// The content view covers the transparent title bar, so clicks in the header
+// reach the app, not the title bar — which is what normally moves a window.
+// Called from the header's mouseDown: hand that click to AppKit as a window
+// drag (same behaviour as a real title bar, including screen-edge snapping).
+void takeDragWindow (void* nativeView)
+{
+    NSWindow* window = [(NSView*) nativeView window];
+    NSEvent* event = [NSApp currentEvent];
+    if (window != nil && event != nil && event.type == NSEventTypeLeftMouseDown)
+        [window performWindowDragWithEvent: event];
+}

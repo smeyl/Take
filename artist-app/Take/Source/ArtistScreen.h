@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "WindowStyle.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -783,6 +784,15 @@ public:
         hline (g, 295.0f);            // under the meters
         hline (g, 464.0f);            // above the cue mix
         hline (g, (float) getHeight() - 65.0f);  // above the footer
+    }
+
+    // The header is where the title bar would be: dragging it moves the window.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+       #if JUCE_MAC
+        if (e.getPosition().y < 44)
+            takeDragWindowFrom (*this);
+       #endif
     }
 
     void resized() override
