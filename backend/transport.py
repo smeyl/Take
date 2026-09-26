@@ -30,6 +30,11 @@ CHANNELS = 1
 # Optional device overrides (name, or part of it) — e.g. an audio interface.
 # Default: the system's input/output devices.
 INPUT_DEVICE = os.environ.get("TAKE_INPUT_DEVICE") or None
+# The one input the artist's mic is on (1-based: input 1, 2, ... of the input
+# device). Only that input is recorded, streamed, monitored and metered — never
+# a mix of inputs, which on an interface would halve the voice (-6 dB) and add
+# the other inputs' noise.
+INPUT_CHANNEL = int(os.environ.get("TAKE_INPUT_CHANNEL") or 1)
 OUTPUT_DEVICE = os.environ.get("TAKE_OUTPUT_DEVICE") or None
 _SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 
@@ -48,7 +53,8 @@ def _get_sync_format():
 app = Flask(__name__)
 CORS(app)
 
-levels = {"l": -60.0, "r": -60.0}
+# "l"/"r" repeat "level" for artist-app builds that still draw L/R meters.
+levels = {"level": -60.0, "channel": INPUT_CHANNEL, "l": -60.0, "r": -60.0}
 
 _lock = threading.Lock()
 _recording = False
@@ -167,14 +173,12 @@ def _find_device(name, kind):
 
 
 def _on_input(indata, frames, t, status):
-    mono = indata.mean(axis=1) if indata.shape[1] > 1 else indata[:, 0].copy()
+    mono = indata[:, levels["channel"] - 1].copy()   # the chosen input only
 
-    # Meters — stereo inputs show L/R, mono shows the same on both.
-    _level_window.append(np.mean(indata[:, :2] ** 2, axis=0))
-    ms = np.mean(np.array(_level_window), axis=0)
-    l_ms, r_ms = (ms[0], ms[1]) if ms.shape[0] > 1 else (ms[0], ms[0])
-    levels["l"] = max(-60.0, min(0.0, 10.0 * math.log10(l_ms + 1e-12)))
-    levels["r"] = max(-60.0, min(0.0, 10.0 * math.log10(r_ms + 1e-12)))
+    # Meter — that same input.
+    _level_window.append(float(np.mean(mono ** 2)))
+    ms = sum(_level_window) / len(_level_window)
+    levels["level"] = levels["l"] = levels["r"] = max(-60.0, min(0.0, 10.0 * math.log10(ms + 1e-12)))
 
     # Monitor — straight to the output callback (see _monitor above).
     _monitor.append(mono)
@@ -226,8 +230,17 @@ def _audio_thread():
     try:
         info = sd.query_devices(in_dev if in_dev is not None else sd.default.device[0])
         rate = int(info["default_samplerate"])
-        channels = min(2, int(info["max_input_channels"])) or 1
-        inp = sd.InputStream(device=in_dev, samplerate=rate, channels=channels, blocksize=BLOCK,
+        available = int(info["max_input_channels"])
+        channel = INPUT_CHANNEL
+        if not 1 <= channel <= available:
+            print(f"[transport] WARNING: TAKE_INPUT_CHANNEL={INPUT_CHANNEL}, but "
+                  f"'{info['name']}' has {available} input(s) — recording input 1 instead.",
+                  flush=True)
+            channel = 1
+        levels["channel"] = channel
+        # Open inputs 1..channel and keep only the last (PortAudio streams
+        # always start at the device's first input).
+        inp = sd.InputStream(device=in_dev, samplerate=rate, channels=channel, blocksize=BLOCK,
                              dtype="float32", latency="low", callback=_on_input)
     except Exception as e:
         # Without this stream there are no meters, no mic stream to the
@@ -249,7 +262,8 @@ def _audio_thread():
     inp.start()
     if out is not None:
         out.start()
-    print(f"[transport] audio: {info['name']} @ {rate} Hz, input {inp.latency * 1000:.1f} ms, "
+    print(f"[transport] audio: {info['name']} input {levels['channel']} of {available} @ {rate} Hz, "
+          f"input {inp.latency * 1000:.1f} ms, "
           f"monitor output {audio['output_latency'] * 1000:.1f} ms", flush=True)
     threading.Event().wait()   # keep the streams alive for the process lifetime
 

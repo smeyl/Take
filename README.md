@@ -96,6 +96,8 @@ The engineer app shows which track is armed next to the Pro Tools connection row
 3. Put on headphones — you will hear yourself through the cue mix
 4. Perform when the engineer starts recording
 
+Take records one input — the one your mic is on — from the Mac's default input device. To use an audio interface, set `TAKE_INPUT_DEVICE` to its name (or part of it); if your mic isn't on input 1, set `TAKE_INPUT_CHANNEL` to its input number (e.g. `2`). Only that input is recorded, streamed and metered: other inputs on the interface are never mixed in.
+
 ### What Take does in your Pro Tools session
 
 Take only acts when a take arrives, and only on the track that was armed:
