@@ -78,6 +78,13 @@ def new_session():
     # The relay runs on the engineer's machine, so its own LAN IP is the
     # correct fallback when the caller is local or sends a loopback address.
     engineer_ip = _resolve_ip(data.get("ip") or request.remote_addr, get_local_ip())
+    # One engineer, one session: a new code (launch, "Generate new code", or
+    # after End Session) replaces the previous session, so the engineer
+    # backend, the transport proxy and cue commands all follow the new one
+    # and the previous artist is out.
+    for old in list(sessions):
+        log(f"Session {old} replaced")
+        del sessions[old]
     code = generate_code()
     sessions[code] = {
         "engineer_ip": engineer_ip,
@@ -92,18 +99,16 @@ def new_session():
     return jsonify({"code": code, "engineer_ip": engineer_ip})
 
 
-ACTIVE_TTL = 5 * 60  # 5 minutes
-
-
-@app.route("/session/active", methods=["GET"])
-def active_session():
-    now = time.time()
-    recent = [(code, s) for code, s in sessions.items()
-              if now - s["created_at"] < ACTIVE_TTL]
-    if not recent:
-        return jsonify({"error": "no active session"}), 404
-    code, s = max(recent, key=lambda x: x[1]["created_at"])
-    return jsonify({"code": code, "engineer_ip": s["engineer_ip"]})
+@app.route("/session/current", methods=["GET"])
+def current_session():
+    """The session in use — the most recent one still open (no age limit).
+    The engineer backend follows this; so does the engineer app's start
+    screen."""
+    prune_expired()
+    if not sessions:
+        return jsonify({"error": "no session"}), 404
+    code, s = max(sessions.items(), key=lambda x: x[1]["created_at"])
+    return jsonify({"code": code, "engineer_ip": s["engineer_ip"], "artist_ip": s["artist_ip"]})
 
 
 @app.route("/session/join", methods=["POST"])

@@ -33,7 +33,7 @@ public:
                                    juce::TextEditor& editor) override
     {
         g.setColour (editor.findColour (juce::TextEditor::backgroundColourId));
-        g.fillRoundedRectangle (0.0f, 0.0f, (float) width, (float) height, 6.0f);
+        g.fillRoundedRectangle (0.0f, 0.0f, (float) width, (float) height, 8.0f);
     }
 
     void drawTextEditorOutline (juce::Graphics& g, int width, int height,
@@ -43,11 +43,48 @@ public:
                           ? editor.findColour (juce::TextEditor::focusedOutlineColourId)
                           : editor.findColour (juce::TextEditor::outlineColourId);
         g.setColour (colour);
-        g.drawRoundedRectangle (0.5f, 0.5f, width - 1.0f, height - 1.0f, 6.0f, 1.0f);
+        g.drawRoundedRectangle (0.5f, 0.5f, width - 1.0f, height - 1.0f, 8.0f, 1.0f);
     }
 };
 
 //==============================================================================
+// The primary action, in the design's selected-blue style (as the engineer
+// app's Start session button).
+class TakePrimaryButton : public juce::Component
+{
+public:
+    std::function<void()> onClick;
+    void setText (const juce::String& t) { text = t; repaint(); }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced (0.5f);
+        const bool on = isEnabled();
+        if (on)
+        {
+            g.setColour (juce::Colour (isMouseOver() ? 0xFF15284D : 0xFF10203F));
+            g.fillRoundedRectangle (b, 8.0f);
+        }
+        g.setColour (on ? TakeUI::Col::blue : TakeUI::Col::line2);
+        g.drawRoundedRectangle (b, 8.0f, 1.0f);
+        TakeUI::text (g, text, TakeUI::font (12.0f, TakeUI::Weight::medium), on ? TakeUI::Col::blue : TakeUI::Col::faint,
+                      getLocalBounds().toFloat(), juce::Justification::centred);
+    }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit  (const juce::MouseEvent&) override { repaint(); }
+    void enablementChanged() override { repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (isEnabled() && getLocalBounds().contains (e.getPosition()) && onClick) onClick();
+    }
+
+private:
+    juce::String text;
+};
+
+//==============================================================================
+// The artist's join screen: enter the engineer's session code (found on the
+// LAN by discovery), or the engineer's address if discovery can't find them.
 class RoleSelectScreen : public juce::Component,
                          public juce::TextEditor::Listener,
                          private juce::Timer
@@ -59,40 +96,30 @@ public:
     {
         setLookAndFeel (&laf);
 
-        subtitleLabel.setText ("Artist", juce::dontSendNotification);
-        subtitleLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
-        subtitleLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF5C5C6E));
-        subtitleLabel.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (subtitleLabel);
-
-        sessionCodeEditor.setTextToShowWhenEmpty (juce::String::fromUTF8 ("A7 \xC2\xB7 F2 \xC2\xB7 K9"),
-                                                  juce::Colour (0xFF3A3A45));
-        sessionCodeEditor.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
-        sessionCodeEditor.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
-        sessionCodeEditor.setColour (juce::TextEditor::outlineColourId,        juce::Colour (0xFF222228));
-        sessionCodeEditor.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xFF3A3A48));
-        sessionCodeEditor.setCaretVisible (true);
-        sessionCodeEditor.setFont (juce::Font (juce::FontOptions (15.0f)));
-        sessionCodeEditor.setJustification (juce::Justification::centred);
-        sessionCodeEditor.addListener (this);
-        addAndMakeVisible (sessionCodeEditor);
-
-        auto setupSmallEditor = [] (juce::TextEditor& ed, const juce::String& placeholder)
+        auto styleEditor = [] (juce::TextEditor& ed, const juce::String& placeholder, const juce::Font& f)
         {
-            ed.setTextToShowWhenEmpty (placeholder, juce::Colour (0xFF3A3A45));
-            ed.setColour (juce::TextEditor::backgroundColourId,     juce::Colour (0xFF18181C));
-            ed.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF0F0F8));
-            ed.setColour (juce::TextEditor::outlineColourId,        juce::Colour (0xFF222228));
-            ed.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xFF3A3A48));
+            namespace C = TakeUI::Col;
+            ed.setTextToShowWhenEmpty (placeholder, C::ghost);
+            ed.setColour (juce::TextEditor::backgroundColourId,     C::surface);
+            ed.setColour (juce::TextEditor::textColourId,           juce::Colour (0xFFF2F2F3));
+            ed.setColour (juce::TextEditor::outlineColourId,        C::line2);
+            ed.setColour (juce::TextEditor::focusedOutlineColourId, C::blue);
+            ed.setColour (juce::TextEditor::highlightColourId,      C::blue.withAlpha (0.3f));
+            ed.setColour (juce::CaretComponent::caretColourId,      C::blue);
             ed.setCaretVisible (true);
-            ed.setFont (juce::Font (juce::FontOptions (12.0f)));
+            ed.setFont (f);
             ed.setJustification (juce::Justification::centred);
         };
 
-        // Manual IP entry — a fallback only. The primary flow is UDP discovery
-        // (the artist enters just the code); this field appears if discovery
-        // fails or the user opts into it via the toggle below.
-        setupSmallEditor (relayHostEditor, "Engineer's IP address");
+        styleEditor (sessionCodeEditor, juce::String::fromUTF8 ("A7 \xC2\xB7 F2 \xC2\xB7 K9"),
+                     TakeUI::font (21.0f, TakeUI::Weight::semibold, 1.05f));
+        sessionCodeEditor.addListener (this);
+        addAndMakeVisible (sessionCodeEditor);
+
+        // Manual address entry — a fallback only. The primary flow is LAN
+        // discovery (the artist enters just the code); this field appears if
+        // discovery fails or the artist opts into it via the link below.
+        styleEditor (relayHostEditor, "e.g. 192.168.1.20", TakeUI::font (13.0f));
         // Pre-fill from the session file written by start_artist.py, if present
         // (only exists after a prior successful join) — a convenience for the
         // manual path; discovery is tried first regardless.
@@ -104,36 +131,9 @@ public:
         addAndMakeVisible (relayHostEditor);
         startTimer (1000);  // keep the manual field pre-filled if a file appears
 
-        hintLabel.setText ("Find it on the engineer's screen",
-                           juce::dontSendNotification);
-        hintLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
-        hintLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF5C5C6E));
-        hintLabel.setJustificationType (juce::Justification::centred);
-        addAndMakeVisible (hintLabel);
-
-        // Clickable text link that reveals the manual IP field. Doesn't
-        // intercept clicks itself — the parent's mouseDown handles the hit test.
-        manualToggleLabel.setText ("Can't connect? Enter IP manually",
-                                   juce::dontSendNotification);
-        manualToggleLabel.setFont (juce::Font (juce::FontOptions (10.0f)));
-        manualToggleLabel.setColour (juce::Label::textColourId, juce::Colour (0xFF4F8FFF));
-        manualToggleLabel.setJustificationType (juce::Justification::centred);
-        manualToggleLabel.setInterceptsMouseClicks (false, false);
-        addAndMakeVisible (manualToggleLabel);
-
-        joinButton.setButtonText ("Join session");
-        joinButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1D9E75));
-        joinButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF17805E));
-        joinButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFF0F0F8));
-        joinButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFF0F0F8));
+        joinButton.setText ("Join session");
         joinButton.onClick = [this] { doJoinSession(); };
         addAndMakeVisible (joinButton);
-
-        errorLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
-        errorLabel.setColour (juce::Label::textColourId, juce::Colour (0xFFFF4F4F));
-        errorLabel.setJustificationType (juce::Justification::centred);
-        errorLabel.setVisible (false);
-        addAndMakeVisible (errorLabel);
 
         setManualMode (false);  // discovery-first: hide the IP field by default
     }
@@ -163,56 +163,93 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xFF0A0A0B));
+        namespace C = TakeUI::Col;
+        const float w = (float) getWidth();
+        g.fillAll (C::bg);
 
-        auto boldFont = juce::Font (juce::FontOptions (56.0f).withStyle ("Bold"));
-        juce::AttributedString logo;
-        logo.setJustification (juce::Justification::centred);
-        logo.append ("T",   boldFont, juce::Colour (0xFFF0F0F8));
-        logo.append ("ake", boldFont, juce::Colour (0xFF4F8FFF));
-        logo.draw (g, juce::Rectangle<float> (0.0f, 160.0f, (float) getWidth(), 66.0f));
+        // Header, as on the session screen: mark + wordmark, role on the right
+        const float cx = 89.0f, cy = 21.5f, r = 5.4f;
+        g.setColour (C::teal.withAlpha (0.15f));
+        g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
+        g.setColour (C::teal);
+        g.drawEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f, 1.62f);
+        TakeUI::text (g, "TAKE", TakeUI::font (13.0f, TakeUI::Weight::semibold, 0.39f), C::text, { 106.0f, 13.0f, 60.0f, 17.0f });
+        TakeUI::text (g, "ARTIST", TakeUI::font (9.5f, TakeUI::Weight::regular, 1.33f), C::muted,
+                      { 0.0f, 16.0f, w - 16.0f, 12.0f }, juce::Justification::centredRight);
+        g.setColour (C::line);
+        g.fillRect (0.0f, 43.0f, w, 1.0f);
+
+        const auto labelF = TakeUI::font (9.5f, TakeUI::Weight::regular, 1.33f);
+        const auto hintF  = TakeUI::font (10.5f);
+        const auto code   = sessionCodeEditor.getBounds().toFloat();
+        TakeUI::text (g, "SESSION CODE", labelF, C::muted, { 0.0f, code.getY() - 20.0f, w, 12.0f },
+                      juce::Justification::centred);
+        TakeUI::text (g, "From the engineer's Take app", hintF, C::faint, { 0.0f, code.getBottom() + 8.0f, w, 14.0f },
+                      juce::Justification::centred);
+
+        if (manualMode)
+        {
+            const auto ip = relayHostEditor.getBounds().toFloat();
+            TakeUI::text (g, "ENGINEER'S ADDRESS", labelF, C::muted, { 0.0f, ip.getY() - 20.0f, w, 12.0f },
+                          juce::Justification::centred);
+            TakeUI::text (g, "Shown under the code on the engineer's start screen", hintF, C::faint,
+                          { 0.0f, ip.getBottom() + 8.0f, w, 14.0f }, juce::Justification::centred);
+        }
+        else
+        {
+            TakeUI::text (g, "Can't connect? Enter the engineer's address", hintF, C::blue, manualLinkBounds(),
+                          juce::Justification::centred);
+        }
+
+        if (errorText.isNotEmpty())
+            TakeUI::text (g, errorText, TakeUI::font (11.0f), C::red,
+                          { 0.0f, (float) joinButton.getBottom() + 12.0f, w, 16.0f }, juce::Justification::centred);
     }
 
     void resized() override
     {
-        int w  = getWidth();
-        int cx = (w - 240) / 2;
-
-        subtitleLabel.setBounds (0,  228, w,   22);
-        sessionCodeEditor.setBounds (cx, 266, 240, 46);
-
+        const int w = getWidth(), bw = 320, x = (w - bw) / 2;
+        // The block sits a little above centre; the address field adds a row.
+        const int top = manualMode ? 188 : 224;
+        sessionCodeEditor.setBounds (x, top, bw, 52);
+        int y = top + 52 + 30;
         if (manualMode)
         {
-            relayHostEditor.setBounds (cx, 320, 240, 34);
-            hintLabel.setBounds       (0,  356, w,   16);
-            joinButton.setBounds      (cx, 380, 240, 46);
-            errorLabel.setBounds      (0,  434, w,   22);
+            relayHostEditor.setBounds (x, y + 24, bw, 40);
+            y += 24 + 40 + 30;
         }
-        else
-        {
-            joinButton.setBounds        (cx, 326, 240, 46);
-            manualToggleLabel.setBounds (0,  384, w,   18);
-            errorLabel.setBounds        (0,  420, w,   22);
-        }
+        joinButton.setBounds (x, y + 12, bw, 40);
     }
 
-    // Reveal (or hide) the manual IP field. Discovery is the default; this is
-    // the "Can't connect?" escape hatch, also auto-shown when discovery fails.
+    juce::Rectangle<float> manualLinkBounds() const
+    {
+        return { 0.0f, (float) joinButton.getBottom() + 40.0f, (float) getWidth(), 16.0f };
+    }
+
+    // Reveal (or hide) the manual address field. Discovery is the default;
+    // this is the "Can't connect?" escape hatch, also shown when discovery fails.
     void setManualMode (bool on)
     {
         manualMode = on;
         relayHostEditor.setVisible (on);
-        hintLabel.setVisible (on);
-        manualToggleLabel.setVisible (! on);
         resized();
         repaint();
         if (on)
             relayHostEditor.grabKeyboardFocus();
     }
 
+    void setError (const juce::String& e) { errorText = e; repaint(); }
+
+    void setConnecting (bool connecting)
+    {
+        joinButton.setEnabled (! connecting);
+        joinButton.setText (connecting ? juce::String::fromUTF8 ("Connecting\xE2\x80\xA6") : "Join session");
+        if (connecting) setError ({});
+    }
+
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (! manualMode && manualToggleLabel.getBounds().contains (e.getPosition()))
+        if (! manualMode && manualLinkBounds().contains (e.position))
             setManualMode (true);
        #if JUCE_MAC
         else if (e.getPosition().y < 44)   // where the title bar would be: move the window
@@ -262,8 +299,7 @@ private:
 
         if (raw.length() < 6)
         {
-            errorLabel.setText ("Enter a 6-character code", juce::dontSendNotification);
-            errorLabel.setVisible (true);
+            setError ("Enter the 6-character code");
             return;
         }
 
@@ -279,9 +315,7 @@ private:
             }
         }
 
-        joinButton.setEnabled (false);
-        joinButton.setButtonText ("Connecting\xE2\x80\xA6");
-        errorLabel.setVisible (false);
+        setConnecting (true);
 
         // Capture value types, the onJoin callback, and a SafePointer for error
         // feedback. onJoin is owned by MainComponent which outlives the request.
@@ -315,13 +349,9 @@ private:
                 juce::MessageManager::callAsync ([safeThis]() mutable
                 {
                     if (safeThis == nullptr) return;
-                    safeThis->joinButton.setEnabled (true);
-                    safeThis->joinButton.setButtonText ("Join session");
+                    safeThis->setConnecting (false);
                     safeThis->setManualMode (true);
-                    safeThis->errorLabel.setText (
-                        "Couldn't find the engineer on this network",
-                        juce::dontSendNotification);
-                    safeThis->errorLabel.setVisible (true);
+                    safeThis->setError ("Couldn't find the engineer on this network");
                 });
                 return;
             }
@@ -342,14 +372,10 @@ private:
                     return;
                 }
                 if (safeThis == nullptr) return;
-                safeThis->joinButton.setEnabled (true);
-                safeThis->joinButton.setButtonText ("Join session");
-                safeThis->setManualMode (true);  // let them try a manual IP
-                safeThis->errorLabel.setText (
-                    statusCode == 404 ? "Session not found"
-                                      : "Could not reach the engineer",
-                    juce::dontSendNotification);
-                safeThis->errorLabel.setVisible (true);
+                safeThis->setConnecting (false);
+                safeThis->setManualMode (true);  // let them try a manual address
+                safeThis->setError (statusCode == 404 ? "No session with that code — check it with the engineer"
+                                                      : "Could not reach the engineer");
             });
         }).detach();
     }
@@ -498,13 +524,10 @@ private:
     }
 
     TakeLookAndFeel  laf;
-    juce::Label      subtitleLabel;
-    juce::TextEditor sessionCodeEditor;
-    juce::TextEditor relayHostEditor;
-    juce::Label      hintLabel;
-    juce::Label      manualToggleLabel;
-    juce::TextButton joinButton;
-    juce::Label      errorLabel;
+    juce::TextEditor  sessionCodeEditor;
+    juce::TextEditor  relayHostEditor;
+    TakePrimaryButton joinButton;
+    juce::String      errorText;
     bool             isFormattingCode { false };
     bool             manualMode       { false };
 };

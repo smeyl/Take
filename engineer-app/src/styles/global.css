@@ -8,13 +8,25 @@ button:disabled{cursor:default}
 .root{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden}
 .app-shell{flex:1;min-height:0;width:100%;display:flex;align-items:stretch;overflow:hidden}
 
-/* ── SESSION SCREEN ── */
-.role-title{font-weight:700;font-size:52px;color:#f0f0f8;letter-spacing:-1px;margin-bottom:8px}
-.role-title span{color:#4f8fff}
-.role-sub{font-size:11px;color:#5c5c6e;letter-spacing:0.08em;margin-bottom:40px}
-.role-btn{flex:1;padding:11px;border-radius:6px;font-size:11px;font-weight:500;font-family:inherit;cursor:pointer;border:none;letter-spacing:0.05em;transition:all 0.15s}
-.role-btn.engineer{background:#4f8fff;color:white}
-.role-btn.engineer:hover{background:#6fa8ff}
+/* ── START SCREEN (500x420) — same system as the main window ──
+   The whole window moves it (no title bar); controls opt out. */
+.start{width:100%;height:100%;display:flex;flex-direction:column;background:#0a0a0b;color:#e8e8ea;overflow:hidden;-webkit-app-region:drag}
+.start-hdr{flex-shrink:0}
+.start-role{font-size:9.5px;letter-spacing:0.14em;color:#6b6b70;text-transform:uppercase}
+.start-body{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 40px;gap:10px}
+.start-code-block{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:10px}
+.start-code{font-size:30px;font-weight:600;letter-spacing:0.05em;color:#f2f2f3}
+.start-code-empty{color:#38383c}
+.start-new{margin-top:4px;-webkit-app-region:no-drag}
+.start-new:disabled{opacity:0.4;cursor:default}
+.start-help{margin:0;font-size:11px;line-height:1.5;color:#6b6b70;text-align:center;max-width:360px}
+.start-addr{font-size:10.5px;color:#4d4d52}
+.start-ip{color:#c4c4c8;user-select:text;-webkit-app-region:no-drag}
+.start-status{min-height:16px;font-size:10.5px;text-align:center}
+.start-foot{padding:14px 40px 24px;border-top:1px solid #1c1c1f}
+.start-btn{width:100%;height:36px;border-radius:8px;border:1px solid #4f8fff;background:#10203f;color:#4f8fff;font-size:12px;font-weight:500;-webkit-app-region:no-drag}
+.start-btn:hover{background:#15284d}
+.start-btn:disabled,.start-btn:disabled:hover{border-color:#2a2a2e;background:transparent;color:#4d4d52}
 
 /* ── MAIN WINDOW + SETTINGS (design reference: main-window.html, settings.html — 380x640) ──
    Headers keep 80px on the left for the macOS window buttons (traffic lights).

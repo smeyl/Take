@@ -1,8 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import C from "../constants/colors";
+import { LogoMark, RefreshIcon } from "./icons";
 
 const RELAY = "http://localhost:5010";
 
+// The engineer's start screen: the session code to give the artist, the
+// address to give them if their app can't find this machine, and Start.
+// Shown at launch and after End Session. The engineer backend follows
+// whichever session is current, so "Generate new code" is safe at any time.
 export default function SessionScreen({ onStart }) {
   const [rawCode, setRawCode] = useState(null);  // null=polling, ""=error, "XXXXXX"=found
   const [engineerIP, setEngineerIP] = useState("");
@@ -16,17 +20,15 @@ export default function SessionScreen({ onStart }) {
     }
   };
 
-  // Apply a relay session response ({code, engineer_ip}) to the UI. The artist
-  // needs both the code and the engineer's IP to join, so we surface both.
+  // Apply a relay session response ({code, engineer_ip}) to the UI.
   const applySession = (data) => {
     setRawCode(data?.code ?? "");
     if (data?.engineer_ip) setEngineerIP(data.engineer_ip);
   };
 
-  // Register a new session with the relay. Returns {code, engineer_ip} or null.
-  // The relay maps a loopback ip to its own LAN IP, so sending 127.0.0.1 is
-  // safe and keeps two-machine sessions working — and it hands that resolved
-  // LAN IP back so we can show it to the artist.
+  // Start a new session on the relay (it replaces the current one). The
+  // relay maps a loopback ip to its own LAN IP and returns it, so it can be
+  // shown to the artist.
   const requestNewCode = async () => {
     try {
       const r = await fetch(`${RELAY}/session/new`, {
@@ -43,15 +45,15 @@ export default function SessionScreen({ onStart }) {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch(`${RELAY}/session/active`);
+        const r = await fetch(`${RELAY}/session/current`);
         if (r.ok) {
-          // A session is already registered with the relay — reuse it.
+          // The backend's session (or the one before End Session) — reuse it.
           applySession(await r.json());
           stopPolling();
           return;
         }
         if (r.status === 404) {
-          // Relay is up but has no active session — register one now.
+          // Relay is up but has no session (e.g. after End Session) — start one.
           stopPolling();
           setCreating(true);
           try {
@@ -84,80 +86,56 @@ export default function SessionScreen({ onStart }) {
   const isLoading = rawCode === null || creating;
   const displayCode = rawCode
     ? `${rawCode.slice(0, 2)} · ${rawCode.slice(2, 4)} · ${rawCode.slice(4, 6)}`
-    : isLoading ? "· · · · · ·" : "— — —";
+    : isLoading ? "·· · ·· · ··" : "—";
 
   return (
-    // The whole screen moves the window (it has no title bar, like the main
-    // window's header); the controls opt out so they stay clickable.
-    <div style={{
-      width: "100%", height: "100%",
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      background: C.bg,
-      WebkitAppRegion: "drag",
-    }}>
-      <div style={{ width: 320, display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div className="role-title">T<span>ake</span></div>
-        <div className="role-sub" style={{ marginBottom: 32 }}>Engineer</div>
+    <div className="start">
+      <div className="hdr start-hdr">
+        <div className="logo">
+          <LogoMark />
+          <span className="logo-word">TAKE</span>
+        </div>
+        <span className="start-role">Engineer</span>
+      </div>
 
-        <div style={{
-          width: "100%", background: C.raised,
-          border: `1px solid ${C.border}`, borderRadius: 6,
-          padding: "20px 24px 16px", textAlign: "center", marginBottom: 16,
-        }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: "0.08em", marginBottom: 4 }}>
-            SESSION CODE
-          </div>
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 24, letterSpacing: "0.14em",
-            color: rawCode ? C.bright : C.muted,
-            marginBottom: 12,
-          }}>
-            {displayCode}
-          </div>
-          <span
-            style={{
-              fontSize: 10, color: creating ? C.muted : C.blue,
-              cursor: creating ? "default" : "pointer",
-              letterSpacing: "0.05em", userSelect: "none",
-              WebkitAppRegion: "no-drag",
-            }}
-            onClick={creating ? undefined : createNewCode}
+      <div className="start-body">
+        <div className="start-code-block">
+          <span className="code-label">Session code</span>
+          <span className={`start-code ${rawCode ? "" : "start-code-empty"}`}>{displayCode}</span>
+          <button
+            className="popout-btn start-new"
+            onClick={createNewCode}
+            disabled={creating || rawCode === null}
           >
+            <span className={creating ? "spin" : ""} style={{ display: "flex" }}>
+              <RefreshIcon size={10} color="#8a8a90" />
+            </span>
             Generate new code
-          </span>
+          </button>
         </div>
 
-        <div style={{ fontSize: 10, color: C.muted, textAlign: "center", marginBottom: 16, lineHeight: 1.5 }}>
-          Give the artist the session code — they'll find you on the network automatically.
-        </div>
-
-        {/* Relay IP kept as small debug info — the artist no longer needs it
-            unless discovery is blocked and they fall back to manual entry. */}
+        <p className="start-help">
+          Give the artist this code — their Take app finds you on the network.
+        </p>
         {engineerIP && (
-          <div style={{
-            fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 9, color: C.dim, textAlign: "center",
-            marginBottom: 16, userSelect: "text",
-            WebkitAppRegion: "no-drag",
-          }}>
-            relay {engineerIP}
-          </div>
+          <p className="start-help start-addr">
+            If it can't, they can enter this address instead: <span className="start-ip">{engineerIP}</span>
+          </p>
         )}
 
-        <div style={{ fontSize: 10, marginBottom: 8, textAlign: "center", minHeight: 16 }}>
+        <div className="start-status">
           {rawCode === null && !creating && (
-            <span style={{ color: C.muted }}>Waiting for the Take backend to start…</span>
+            <span style={{ color: "#6b6b70" }}>Waiting for the Take backend to start…</span>
           )}
           {rawCode === "" && (
-            <span style={{ color: C.amber }}>Relay unreachable — start relay.py first</span>
+            <span style={{ color: "#e7b23e" }}>Relay unreachable — start relay.py first</span>
           )}
         </div>
+      </div>
 
+      <div className="start-foot">
         <button
-          className="role-btn engineer"
-          style={{ width: "100%", opacity: rawCode ? 1 : 0.4, WebkitAppRegion: "no-drag" }}
+          className="start-btn"
           disabled={!rawCode}
           onClick={() => {
             // Design reference: main-window.html is 380x640.

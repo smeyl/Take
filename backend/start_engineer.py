@@ -38,34 +38,57 @@ STREAM_TOLERANCE_MS = 8
 stop_event = threading.Event()
 
 
-def run_heartbeat(relay_url, code, stop_evt, on_dead):
+# The session being served: the relay's current one. Changes when the engineer
+# app makes a new code ("Generate new code", or a fresh session after End
+# Session), and its artist_ip is set once an artist joins it.
+current = {"code": None, "artist_ip": None}
+
+
+def _fmt(code):
+    return f"{code[0:2]} · {code[2:4]} · {code[4:6]}"
+
+
+def follow_session(relay_url, stop_evt):
+    """Follow the relay's current session: switch to each new code, point the
+    timecode and bounce at whichever artist joins it, and heartbeat it. An
+    artist leaving doesn't stop anything — the backend waits for the next."""
     artist_was_alive = None
-    missed = 0
+    next_heartbeat = 0.0
     while not stop_evt.is_set():
         try:
-            requests.post(f"{relay_url}/session/{code}/heartbeat",
-                          json={"role": "engineer"}, timeout=3)
-        except requests.RequestException:
-            pass
-        try:
-            r = requests.get(f"{relay_url}/session/{code}/status", timeout=3)
-            if r.ok:
-                artist_alive = r.json()["artist"]
-                if artist_alive:
-                    if artist_was_alive is False:
+            r = requests.get(f"{relay_url}/session/current", timeout=3)
+            session = r.json() if r.ok else None
+        except (requests.RequestException, ValueError):
+            session = None
+        if session and session["code"] != current["code"]:
+            current.update(code=session["code"], artist_ip=None)
+            bounce.TARGET_IP = "127.0.0.1"
+            artist_was_alive = None
+            next_heartbeat = 0.0
+            print(f"\nSession code: {_fmt(session['code'])}\nWaiting for artist to join...", flush=True)
+        if session and session["artist_ip"] and session["artist_ip"] != current["artist_ip"]:
+            current["artist_ip"] = session["artist_ip"]
+            bounce.TARGET_IP = session["artist_ip"]
+            print(f"Artist connected — {session['artist_ip']}", flush=True)
+
+        if current["code"] and time.monotonic() >= next_heartbeat:
+            next_heartbeat = time.monotonic() + 5
+            code = current["code"]
+            try:
+                requests.post(f"{relay_url}/session/{code}/heartbeat",
+                              json={"role": "engineer"}, timeout=3)
+                st = requests.get(f"{relay_url}/session/{code}/status", timeout=3)
+                if st.ok and current["artist_ip"]:
+                    alive = st.json()["artist"]
+                    if alive and artist_was_alive is False:
                         print("✓ Artist reconnected", flush=True)
-                    missed = 0
-                else:
-                    missed += 1
-                    if artist_was_alive is True:
-                        print("⚠ Artist disconnected", flush=True)
-                    if missed >= 2 and not stop_evt.is_set():
-                        on_dead()
-                        return
-                artist_was_alive = artist_alive
-        except requests.RequestException:
-            pass
-        stop_evt.wait(5)
+                    elif not alive and artist_was_alive:
+                        print("⚠ Artist disconnected — waiting for them to rejoin, "
+                              "or for a new session", flush=True)
+                    artist_was_alive = alive
+            except (requests.RequestException, ValueError, KeyError):
+                pass
+        stop_evt.wait(0.25)
 
 
 def get_local_ip():
@@ -231,38 +254,6 @@ if __name__ == "__main__":
                           "— is relay.py running?", file=sys.stderr)
                     sys.exit(1)
                 time.sleep(1)
-        code = resp.json()["code"]
-
-        display_code = f"{code[0:2]} · {code[2:4]} · {code[4:6]}"
-        print(f"\nSession code: {display_code}\n")
-
-        # Record/Stop in the DAW's own transport drives the artist's capture.
-        # Started before the artist joins: the relay knows them the moment
-        # they join, so a Record pressed right after is followed at once, and
-        # one pressed before they've joined is reported as not captured.
-        watcher = threading.Thread(target=record_watcher.run, args=(stop_event,),
-                                   name="record-watcher", daemon=True)
-        watcher.start()
-        # Takes can arrive before this session's artist has joined — e.g. one
-        # the artist was capturing while this backend restarted — so receive
-        # from the start too.
-        receiver_thread = threading.Thread(target=run_receiver, name="http-receiver", daemon=True)
-        receiver_thread.start()
-
-        print("Waiting for artist to join...")
-
-        artist_ip = None
-        while artist_ip is None:
-            time.sleep(0.25)
-            try:
-                r = requests.get(f"{RELAY_URL}/session/{code}", timeout=5)
-                if r.status_code == 200:
-                    artist_ip = r.json()["artist_ip"]
-            except requests.RequestException:
-                pass
-
-        bounce.TARGET_IP = artist_ip
-        print(f"Artist connected — {artist_ip}\n")
 
         daw_ok = daw.alive()
 
@@ -277,28 +268,32 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, lambda sig, frame: shutdown())
         signal.signal(signal.SIGTERM, lambda sig, frame: shutdown())
 
+        # Everything runs from launch and follows the relay's current session
+        # (follow_session): the engineer app can replace it at any time.
+        # Record/Stop in the DAW's own transport drives the artist's capture;
+        # the relay knows an artist the moment they join, so a Record pressed
+        # right after is followed at once, and one pressed with no artist is
+        # reported as not captured. Takes can arrive before a session's artist
+        # has joined (one being captured while this backend restarted).
         threads = [
+            threading.Thread(target=follow_session, args=(RELAY_URL, stop_event),
+                             name="session", daemon=True),
+            threading.Thread(target=record_watcher.run, args=(stop_event,),
+                             name="record-watcher", daemon=True),
+            threading.Thread(target=run_receiver, name="http-receiver", daemon=True),
             threading.Thread(target=bounce.run_bounce_server, name="bounce-server", daemon=True),
             threading.Thread(target=run_stream_receiver, name="stream-receiver", daemon=True),
-            threading.Thread(
-                target=run_heartbeat,
-                args=(RELAY_URL, code, stop_event,
-                      lambda: shutdown("Session ended — artist disconnected")),
-                name="heartbeat",
-                daemon=True,
-            ),
-            threading.Thread(target=timecode.sender, args=(artist_ip, stop_event),
+            threading.Thread(target=timecode.sender, args=(lambda: current["artist_ip"], stop_event),
                              name="timecode", daemon=True),
         ]
         for t in threads:
             t.start()
-        threads += [watcher, receiver_thread]
 
         print("Take — engineer ready")
         print(f"  File receiver  : 0.0.0.0:{PORT} → {INCOMING_PATH}/")
         print(f"  Stream receiver: UDP 0.0.0.0:{STREAM_PORT}")
         print(f"  Take script    : {'running in ' + daw.NAME if daw_ok else 'NOT RUNNING — start ' + daw.NAME + ' (its Take script loads automatically)'}")
-        print(f"  Timecode       : UDP → {artist_ip}:{timecode.PORT}")
+        print(f"  Timecode       : UDP → the session's artist, port {timecode.PORT}")
         print(f"  Recording      : follows {daw.NAME}'s Record/Stop")
         print("Press Ctrl+C to stop.\n")
 
@@ -307,10 +302,11 @@ if __name__ == "__main__":
         msg = shutdown_reason[0] or "Shutting down..."
         print(f"\n{msg}", flush=True)
 
-        try:
-            requests.delete(f"{RELAY_URL}/session/{code}", timeout=3)
-        except requests.RequestException:
-            pass
+        if current["code"]:
+            try:
+                requests.delete(f"{RELAY_URL}/session/{current['code']}", timeout=3)
+            except requests.RequestException:
+                pass
 
         for t in threads:
             t.join(timeout=2)

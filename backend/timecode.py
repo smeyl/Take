@@ -28,9 +28,11 @@ def position_at(t):
     return pos + (t - received) if playing else pos
 
 
-def sender(target_ip, stop_evt):
-    # Transport state comes from take_session.lua's file export — NOT the
-    # Reaper web API, which returns 404 on this setup (see CLAUDE.md).
+def sender(target, stop_evt):
+    """Send the DAW's transport to the artist. `target` is the artist's IP, or
+    a function returning it (None while no artist has joined) — the engineer
+    backend follows whichever session is current."""
+    target_ip = target if callable(target) else (lambda: target)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     last_sent, was_playing = 0.0, None
     while not stop_evt.is_set():
@@ -40,10 +42,12 @@ def sender(target_ip, stop_evt):
             cursor = daw.get_cursor()
             packet = json.dumps({"pos": round(pos, 4), "playing": playing,
                                  "cursor": None if cursor is None else round(cursor, 3)}).encode()
-            try:
-                sock.sendto(packet, (target_ip, PORT))
-            except OSError:
-                pass
+            ip = target_ip()
+            if ip:
+                try:
+                    sock.sendto(packet, (ip, PORT))
+                except OSError:
+                    pass
             try:
                 requests.post("http://127.0.0.1:5010/timecode",
                               json={"pos": round(pos, 3), "playing": playing},
