@@ -1,1207 +1,639 @@
 #pragma once
 #include <JuceHeader.h>
-#include "DetailsPanel.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <cerrno>
+#include <cmath>
+#include <functional>
 #include <thread>
 #include <string>
 #include <vector>
 
+// The artist's main window — built to docs/artist-window.html (400 x 640).
+// Positions below are the reference's, measured in the browser; the header
+// leaves 80 px on the left for the macOS window buttons (Main.cpp places them).
+
 //==============================================================================
 namespace TakeUI
 {
-    inline juce::Font monoFont (float size, bool bold = false)
+    // Colour tokens from the reference (and the engineer app).
+    namespace Col
     {
-        int style = bold ? juce::Font::bold : juce::Font::plain;
-        return juce::Font (juce::Font::getDefaultMonospacedFontName(), size, style);
+        const juce::Colour bg      { 0xFF0A0A0B };
+        const juce::Colour surface { 0xFF111113 };
+        const juce::Colour sunken  { 0xFF0D0D0F };
+        const juce::Colour line    { 0xFF1C1C1F };
+        const juce::Colour line2   { 0xFF2A2A2E };
+        const juce::Colour text    { 0xFFE8E8EA };
+        const juce::Colour text2   { 0xFFC4C4C8 };
+        const juce::Colour text3   { 0xFF9A9AA0 };
+        const juce::Colour muted   { 0xFF6B6B70 };
+        const juce::Colour faint   { 0xFF4D4D52 };
+        const juce::Colour ghost   { 0xFF38383C };
+        const juce::Colour teal    { 0xFF2DD4BF };
+        const juce::Colour blue    { 0xFF4F8FFF };
+        const juce::Colour purple  { 0xFFA78BFA };
+        const juce::Colour amber   { 0xFFE7B23E };
+        const juce::Colour red     { 0xFFF76464 };
+    }
+
+    enum class Weight { regular, medium, semibold, bold };
+
+    // IBM Plex Mono (embedded, BinaryData) at a CSS pixel size; letterSpacing
+    // in px, as the reference's CSS gives it.
+    inline juce::Font font (float px, Weight weight = Weight::regular, float letterSpacing = 0.0f)
+    {
+        static const juce::Typeface::Ptr faces[] = {
+            juce::Typeface::createSystemTypefaceFor (BinaryData::IBMPlexMonoRegular_ttf,  (size_t) BinaryData::IBMPlexMonoRegular_ttfSize),
+            juce::Typeface::createSystemTypefaceFor (BinaryData::IBMPlexMonoMedium_ttf,   (size_t) BinaryData::IBMPlexMonoMedium_ttfSize),
+            juce::Typeface::createSystemTypefaceFor (BinaryData::IBMPlexMonoSemiBold_ttf, (size_t) BinaryData::IBMPlexMonoSemiBold_ttfSize),
+            juce::Typeface::createSystemTypefaceFor (BinaryData::IBMPlexMonoBold_ttf,     (size_t) BinaryData::IBMPlexMonoBold_ttfSize),
+        };
+        juce::Font f (juce::FontOptions (faces[(int) weight]).withPointHeight (px));
+        if (letterSpacing != 0.0f)
+            f.setExtraKerningFactor (letterSpacing / f.getHeight());  // JUCE tracking is a fraction of height
+        return f;
+    }
+
+    inline float textWidth (const juce::Font& f, const juce::String& s)
+    {
+        return juce::GlyphArrangement::getStringWidth (f, s);
+    }
+
+    inline void text (juce::Graphics& g, const juce::String& s, const juce::Font& f, juce::Colour c,
+                      juce::Rectangle<float> r, juce::Justification j = juce::Justification::centredLeft)
+    {
+        g.setFont (f);
+        g.setColour (c);
+        g.drawText (s, r, j, false);
     }
 
     // Read the relay host from the session file written by start_artist.py.
-    // Falls back to 127.0.0.1 for single-machine dev (file not yet present,
-    // or the Python backend hasn't joined yet when JUCE opens).
+    // Falls back to 127.0.0.1 for single-machine dev.
     inline juce::String readRelayHost()
     {
         auto f = juce::File ("/tmp/take_session.json");
         if (! f.existsAsFile()) return "127.0.0.1";
         auto json = juce::JSON::parse (f.loadFileAsString());
         auto ip = json["engineer_ip"].toString();
-        // Loopback addresses are useless to the relay on another machine
         if (ip.isEmpty() || ip.startsWith ("127.") || ip == "localhost")
             return "127.0.0.1";
         return ip;
     }
 
-    // Format seconds as M:SS for the waveform ruler.
+    // M:SS
     inline juce::String formatMinSec (float seconds)
     {
         int s = juce::jmax (0, juce::roundToInt (seconds));
         return juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2);
     }
+
+    // Plain POSIX HTTP/1.0 request (juce::URL asserts on connection failures).
+    // Returns the status code, or 0 if the server couldn't be reached.
+    inline int http (const juce::String& host, int port, const char* method, const juce::String& path,
+                     int timeoutMs, juce::String* responseBody = nullptr, const juce::String& jsonBody = {})
+    {
+        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return 0;
+
+        struct timeval tv { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
+        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
+
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port   = htons ((uint16_t) port);
+        ::inet_pton (AF_INET, host.toRawUTF8(), &addr.sin_addr);
+
+        // connect() ignores the socket timeouts and can block for a minute on
+        // an unreachable host: connect non-blocking and wait at most timeoutMs.
+        const int flags = ::fcntl (fd, F_GETFL, 0);
+        ::fcntl (fd, F_SETFL, flags | O_NONBLOCK);
+        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+        {
+            fd_set w;
+            FD_ZERO (&w);
+            FD_SET (fd, &w);
+            struct timeval ct { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+            int err = 0;
+            socklen_t len = sizeof (err);
+            if (errno != EINPROGRESS || ::select (fd + 1, nullptr, &w, nullptr, &ct) != 1
+                || ::getsockopt (fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0)
+            {
+                ::close (fd);
+                return 0;
+            }
+        }
+        ::fcntl (fd, F_SETFL, flags);
+
+        const auto body = jsonBody.toStdString();
+        const auto req = juce::String (method) + " " + path + " HTTP/1.0\r\nHost: " + host
+                         + "\r\nContent-Type: application/json\r\nContent-Length: "
+                         + juce::String ((int) body.size()) + "\r\nConnection: close\r\n\r\n";
+        ::send (fd, req.toRawUTF8(), req.getNumBytesAsUTF8(), 0);
+        if (! body.empty())
+            ::send (fd, body.data(), body.size(), 0);
+
+        juce::MemoryBlock buf;
+        char tmp[1024];
+        ssize_t n;
+        while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
+            buf.append (tmp, (size_t) n);
+        ::close (fd);
+
+        const auto full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
+        if (! full.startsWith ("HTTP/")) return 0;
+        const int status = full.fromFirstOccurrenceOf (" ", false, false)
+                               .upToFirstOccurrenceOf (" ", false, false).getIntValue();
+        if (responseBody != nullptr)
+        {
+            const int sep = full.indexOf ("\r\n\r\n");
+            *responseBody = sep >= 0 ? full.substring (sep + 4).trim() : juce::String();
+        }
+        return status;
+    }
+
+    inline juce::var getJson (const juce::String& host, int port, const juce::String& path, int timeoutMs)
+    {
+        juce::String body;
+        if (http (host, port, "GET", path, timeoutMs, &body) / 100 != 2) return {};
+        return juce::JSON::parse (body);
+    }
+
+    // A background thread running `work` every `intervalMs`.
+    class Poller : public juce::Thread
+    {
+    public:
+        Poller (const juce::String& name, int intervalMs, std::function<void()> work)
+            : juce::Thread (name), interval (intervalMs), fn (std::move (work)) {}
+        ~Poller() override { stopThread (8000); }  // longest cycle: three 2.5 s requests
+        void run() override
+        {
+            while (! threadShouldExit())
+            {
+                fn();
+                wait (interval);
+            }
+        }
+    private:
+        int interval;
+        std::function<void()> fn;
+    };
 }
 
 //==============================================================================
 class ArtistScreen : public juce::Component
 {
-    //==========================================================================
+    using Col    = juce::Colour;
+    using Weight = TakeUI::Weight;
+
     struct Marker { juce::String name; float position; };  // position in seconds
 
     //==========================================================================
+    // Record ring: READY / 3-2-1 / REC with the take number.
     class RecordRing : public juce::Component
     {
     public:
-        bool isRecording   { false };
-        int  takeNumber    { 1 };
-        int  countdownValue { -1 };   // -1 = no countdown, 3/2/1 = counting
+        static constexpr float kRing = 104.0f, kPad = 16.0f;  // pad = room for the glow
+        int  countdown { 0 };      // seconds left, 0 = not counting
+        bool recording { false };  // capture running (after the countdown)
+        int  take      { 1 };
 
         void paint (juce::Graphics& g) override
         {
-            auto body     = getLocalBounds().toFloat().reduced (3.0f);
-            bool counting = countdownValue > 0;
+            namespace C = TakeUI::Col;
+            const auto c   = getLocalBounds().toFloat().getCentre();
+            const float r  = kRing / 2.0f;
+            const bool rec = recording && countdown == 0;
+            const auto ring = rec ? C::red : C::blue;
 
-            auto ringColour = (isRecording && !counting) ? juce::Colour (0xFFFF4F4F)
-                                                         : juce::Colour (0xFF185FA5);
-
-            if (isRecording && !counting)
+            auto disc = [&] (float radius, juce::Colour col)
             {
-                g.setColour (ringColour.withAlpha (0.05f));
-                g.fillEllipse (body.expanded (26.0f));
-                g.setColour (ringColour.withAlpha (0.11f));
-                g.fillEllipse (body.expanded (15.0f));
-                g.setColour (ringColour.withAlpha (0.22f));
-                g.fillEllipse (body.expanded (6.0f));
+                g.setColour (col);
+                g.fillEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f);
+            };
+            if (rec)
+            {
+                disc (r + 14.0f, ring.withAlpha (0.05f));
+                disc (r + 10.0f, ring.withAlpha (0.11f));
+                disc (r + 5.0f,  ring.withAlpha (0.22f));
             }
             else
             {
-                g.setColour (ringColour.withAlpha (0.07f));
-                g.fillEllipse (body.expanded (8.0f));
+                disc (r + 8.0f, ring.withAlpha (0.07f));
             }
+            disc (r, C::surface);
+            g.setColour (ring);
+            g.drawEllipse (c.x - (r - 1.25f), c.y - (r - 1.25f), (r - 1.25f) * 2.0f, (r - 1.25f) * 2.0f, 2.5f);
 
-            g.setColour (juce::Colour (0xFF111113));
-            g.fillEllipse (body);
-
-            g.setColour (ringColour);
-            g.drawEllipse (body, 2.5f);
-
-            if (counting)
+            const float top = kPad;  // ring's top edge in this component
+            if (countdown > 0)
             {
-                g.setFont (TakeUI::monoFont (40.0f, true));
-                g.setColour (ringColour);
-                g.drawText (juce::String (countdownValue),
-                            getLocalBounds().translated (0, -8),
-                            juce::Justification::centred);
+                TakeUI::text (g, juce::String (countdown), TakeUI::font (40.0f, Weight::bold, 0.68f), ring,
+                              { 0.0f, c.y - 30.0f, (float) getWidth(), 60.0f }, juce::Justification::centred);
+                return;
             }
-            else
-            {
-                g.setFont (TakeUI::monoFont (17.0f, true));
-                g.setColour (juce::Colour (0xFFF0F0F8));
-                g.drawText (isRecording ? "REC" : "READY",
-                            getLocalBounds().translated (0, -8),
-                            juce::Justification::centred);
-            }
-
-            g.setFont (TakeUI::monoFont (11.0f));
-            g.setColour (ringColour.withAlpha (0.75f));
-            g.drawText ("T" + juce::String (takeNumber),
-                        getLocalBounds().translated (0, 16),
-                        juce::Justification::centred);
-        }
-
-        bool hitTest (int x, int y) override
-        {
-            auto c  = getLocalBounds().getCentre();
-            float r = getWidth() / 2.0f;
-            float dx = x - c.x, dy = y - c.y;
-            return (dx * dx + dy * dy) <= (r * r);
+            // Reference: label box at +34.3 (17 tall, 17px line), take at +55.3 (14.5 tall).
+            TakeUI::text (g, rec ? "REC" : "READY", TakeUI::font (17.0f, Weight::bold, 0.68f),
+                          Col (0xFFF0F0F8), { 0.0f, top + 34.3f - 2.55f, (float) getWidth(), 22.1f },
+                          juce::Justification::centred);
+            TakeUI::text (g, "T" + juce::String (take), TakeUI::font (11.0f), ring.withAlpha (0.75f),
+                          { 0.0f, top + 55.3f, (float) getWidth(), 14.5f }, juce::Justification::centred);
         }
     };
 
     //==========================================================================
+    // Input meter for the one input being recorded (the backend records a
+    // single chosen input, never a mix): teal to -12 dB, amber to -6 dB, red above.
     class LevelMeter : public juce::Component
     {
     public:
-        void setLevel (float l, float r) { leftDb = l; rightDb = r; repaint(); }
+        void setLevel (float level)
+        {
+            if (std::abs (level - db) > 0.05f)
+            {
+                db = level;
+                repaint();
+            }
+        }
 
         void paint (juce::Graphics& g) override
         {
-            int rowH = getHeight() / 2;
-            drawChannel (g, "L", leftDb,  getLocalBounds().removeFromTop    (rowH));
-            drawChannel (g, "R", rightDb, getLocalBounds().removeFromBottom (rowH));
+            drawRow (g, "IN", db, ((float) getHeight() - 14.0f) / 2.0f);
         }
 
     private:
-        float leftDb  { -60.0f };
-        float rightDb { -60.0f };
+        float db { -60.0f };
 
-        void drawChannel (juce::Graphics& g, const juce::String& ch,
-                          float db, juce::Rectangle<int> bounds)
+        void drawRow (juce::Graphics& g, const juce::String& ch, float db, float y)
         {
-            g.setFont (TakeUI::monoFont (11.0f));
+            namespace C = TakeUI::Col;
+            const float w = (float) getWidth();
+            TakeUI::text (g, ch, TakeUI::font (10.5f), C::muted, { 0.0f, y, 14.0f, 14.0f },
+                          juce::Justification::centred);
+            TakeUI::text (g, juce::String::fromUTF8 ("\xE2\x88\x92") + juce::String (juce::roundToInt (-db)) + " dB",
+                          TakeUI::font (10.5f), C::muted, { w - 48.0f, y, 48.0f, 14.0f },
+                          juce::Justification::centredRight);
 
-            auto labelR = bounds.removeFromLeft (20);
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (ch, labelR, juce::Justification::centred);
+            const juce::Rectangle<float> bar (22.0f, y + 4.0f, w - 22.0f - 8.0f - 48.0f, 6.0f);
+            juce::Path clip;
+            clip.addRoundedRectangle (bar, 2.0f);
+            g.setColour (Col (0xFF18181C));
+            g.fillPath (clip);
 
-            auto dbR = bounds.removeFromRight (52);
-            g.setColour (db >= -6.0f  ? juce::Colour (0xFFFF4F4F)
-                       : db >= -12.0f ? juce::Colour (0xFFFFAA00)
-                                      : juce::Colour (0xFF5C5C6E));
-            g.drawText (juce::String (juce::roundToInt (db)) + " dB",
-                        dbR, juce::Justification::centred);
-
-            auto area = bounds.reduced (6, 0);
-            auto bar  = juce::Rectangle<int> (area.getX(),
-                                              area.getCentreY() - 3,
-                                              area.getWidth(), 6);
-
-            g.setColour (juce::Colour (0xFF18181C));
-            g.fillRoundedRectangle (bar.toFloat(), 2.0f);
-
-            float frac = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-            if (frac > 0.0f)
+            const float f = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
+            if (f <= 0.0f) return;
+            juce::Graphics::ScopedSaveState save (g);
+            g.reduceClipRegion (clip);
+            constexpr float kAmber = 48.0f / 60.0f, kRed = 54.0f / 60.0f;
+            auto seg = [&] (float from, float to, juce::Colour col)
             {
-                // Three discrete zones: green (-60 to -12), amber (-12 to -6), red (-6 to 0)
-                constexpr float kGreenEnd = 48.0f / 60.0f;   // -12 dB
-                constexpr float kAmberEnd = 54.0f / 60.0f;   // -6 dB
-
-                struct Seg { float start; float end; juce::uint32 colour; };
-                const Seg segs[] = {
-                    { 0.0f,      kGreenEnd, 0xFF1D9E75 },
-                    { kGreenEnd, kAmberEnd, 0xFFFFAA00 },
-                    { kAmberEnd, 1.0f,      0xFFFF4F4F },
-                };
-
-                for (auto& s : segs)
-                {
-                    if (frac <= s.start) break;
-                    float segX = bar.getX() + bar.getWidth() * s.start;
-                    float segW = bar.getWidth() * (juce::jmin (frac, s.end) - s.start);
-                    g.setColour (juce::Colour (s.colour));
-                    g.fillRect (segX, (float) bar.getY(), segW, (float) bar.getHeight());
-                }
-            }
+                if (f <= from) return;
+                g.setColour (col);
+                g.fillRect (bar.getX() + bar.getWidth() * from, bar.getY(),
+                            bar.getWidth() * (juce::jmin (f, to) - from), bar.getHeight());
+            };
+            seg (0.0f, kAmber, C::teal);
+            seg (kAmber, kRed, C::amber);
+            seg (kRed, 1.0f, C::red);
         }
     };
 
     //==========================================================================
-    class TrackWindow : public juce::Component
+    // Backing track: header (label, engineer cursor, time), section strip,
+    // waveform with markers / engineer cursor / playhead, ruler.
+    class TrackView : public juce::Component
     {
     public:
-        float playheadPct   { 0.0f };
-        bool  backingLoaded { false };
-        float totalDuration { 64.0f };
         std::vector<Marker> markers;
-        float punchIn     { 0.0f };
-        float punchOut    { 0.0f };
-        bool  punchActive { false };
-
-        void setMarkers (const std::vector<Marker>& m) { markers = m; repaint(); }
-        void setPunch   (float in, float out, bool active) { punchIn = in; punchOut = out; punchActive = active; repaint(); }
+        float duration  { 0.0f };   // 0 = no backing track loaded
+        float playhead  { 0.0f };   // seconds
+        float cursor    { -1.0f };  // engineer's cursor in the DAW, seconds; < 0 = unknown
 
         void paint (juce::Graphics& g) override
         {
-            constexpr int kSectH = 28, kWaveH = 48;
-            auto b = getLocalBounds();
-            drawSections (g, b.removeFromTop (kSectH));
-            drawWaveform (g, b.removeFromTop (kWaveH));
-            drawRuler    (g, b);
-        }
+            namespace C = TakeUI::Col;
+            const float w = (float) getWidth();
 
-        void resized() override {}
-
-    private:
-        void drawSections (juce::Graphics& g, juce::Rectangle<int> b)
-        {
-            g.setColour (juce::Colour (0xFF18181C));
-            g.fillRect (b);
-
-            if (markers.empty())
+            // Header row (12.5 tall)
+            TakeUI::text (g, "BACKING TRACK", TakeUI::font (10.0f, Weight::regular, 1.0f), C::muted,
+                          { 0.0f, 0.0f, 200.0f, 12.5f });
+            float right = w;
+            if (duration > 0.0f)
             {
-                g.setFont (TakeUI::monoFont (10.0f));
-                g.setColour (juce::Colour (0xFF3A3A48));
-                g.drawText ("No markers", b, juce::Justification::centred);
-                g.setColour (juce::Colour (0xFF1E1E24));
-                g.drawHorizontalLine (b.getBottom() - 1, (float) b.getX(), (float) b.getRight());
-                return;
+                const auto t = TakeUI::formatMinSec (playhead) + " / " + TakeUI::formatMinSec (duration);
+                const auto f = TakeUI::font (10.0f);
+                TakeUI::text (g, t, f, C::faint, { 0.0f, 0.0f, w, 12.5f }, juce::Justification::centredRight);
+                right -= TakeUI::textWidth (f, t) + 12.0f;
+            }
+            if (cursor >= 0.0f)
+            {
+                const auto t = "Engineer " + TakeUI::formatMinSec (cursor);
+                const auto f = TakeUI::font (10.0f);
+                const float tw = TakeUI::textWidth (f, t);
+                TakeUI::text (g, t, f, C::amber, { right - tw, 0.0f, tw + 1.0f, 12.5f });
+                const float dx = right - tw - 5.0f - 3.0f, dy = 6.25f - 1.0f;  // 6 px square turned 45°
+                juce::Path d;
+                d.addQuadrilateral (dx, dy - 4.24f, dx + 4.24f, dy, dx, dy + 4.24f, dx - 4.24f, dy);
+                g.setColour (C::amber);
+                g.fillPath (d);
             }
 
-            const int   n           = (int) markers.size();
-            const float slotW       = (float) b.getWidth() / (float) n;
-            const float playheadSec = playheadPct * totalDuration;
+            // Box: 1 px border, radius 6
+            const juce::Rectangle<float> box (0.0f, 20.5f, w, 88.0f);
+            juce::Path clip;
+            clip.addRoundedRectangle (box, 6.0f);
+            {
+                juce::Graphics::ScopedSaveState save (g);
+                g.reduceClipRegion (clip);
+                const auto inner = box.reduced (1.0f);
+                drawSections (g, inner.withHeight (25.0f));
+                g.setColour (C::line);
+                g.fillRect (inner.getX(), inner.getY() + 25.0f, inner.getWidth(), 1.0f);
+                drawWave  (g, { inner.getX(), inner.getY() + 26.0f, inner.getWidth(), 44.0f });
+                drawRuler (g, { inner.getX(), inner.getY() + 70.0f, inner.getWidth(), 16.0f });
+            }
+            g.setColour (C::line);
+            g.drawRoundedRectangle (box.reduced (0.5f), 5.5f, 1.0f);
+        }
 
-            // current = last marker whose start position <= playhead
-            int currentIdx = 0;
-            for (int i = 0; i < n; ++i)
-                if (markers[i].position <= playheadSec)
-                    currentIdx = i;
+    private:
+        int currentIndex() const
+        {
+            int cur = -1;
+            for (int i = 0; i < (int) markers.size(); ++i)
+                if (markers[(size_t) i].position <= playhead + 0.01f
+                    && (cur < 0 || markers[(size_t) i].position >= markers[(size_t) cur].position))
+                    cur = i;
+            return cur;
+        }
 
+        void drawSections (juce::Graphics& g, juce::Rectangle<float> b)
+        {
+            namespace C = TakeUI::Col;
+            g.setColour (C::surface);
+            g.fillRect (b);
+            if (markers.empty())
+            {
+                TakeUI::text (g, "No markers", TakeUI::font (9.5f), C::faint, b, juce::Justification::centred);
+                return;
+            }
+            const int n = (int) markers.size(), cur = currentIndex();
+            const float slot = b.getWidth() / (float) n;
             for (int i = 0; i < n; ++i)
             {
-                int secX = b.getX() + (int) (slotW * (float) i);
-                int secW = (i == n - 1) ? (b.getWidth() - (int) (slotW * (float) i)) : (int) slotW;
-                auto r   = juce::Rectangle<int> (secX, b.getY(), secW, b.getHeight());
-
-                g.setColour (juce::Colour (0xFF18181C));
-                g.fillRect (r);
-
-                if (i == currentIdx)
+                const juce::Rectangle<float> r (b.getX() + slot * (float) i, b.getY(), slot, b.getHeight());
+                if (i > 0)
                 {
-                    g.setColour (juce::Colour (0xFF4F8FFF).withAlpha (0.08f));
+                    g.setColour (C::line);
+                    g.fillRect (r.getX(), r.getY(), 1.0f, r.getHeight());
+                }
+                if (i == cur)
+                {
+                    g.setColour (C::blue.withAlpha (0.08f));
                     g.fillRect (r);
-
-                    auto cardR = r.reduced (1, 1);
-                    g.setColour (juce::Colour (0xFF2A2A38));
-                    g.drawRoundedRectangle (cardR.toFloat(), 3.0f, 1.0f);
-
-                    g.setFont (TakeUI::monoFont (13.0f, true));
-                    g.setColour (juce::Colour (0xFF4F8FFF));
-                    g.drawText (markers[i].name, r, juce::Justification::centred);
+                    g.setColour (Col (0xFF24324D));
+                    g.drawRect (r, 1.0f);
+                    TakeUI::text (g, markers[(size_t) i].name, TakeUI::font (10.5f, Weight::semibold), C::blue,
+                                  r.reduced (2.0f, 0.0f), juce::Justification::centred);
                 }
                 else
                 {
-                    if (i > 0)
-                    {
-                        g.setColour (juce::Colour (0xFF1E1E24));
-                        g.drawVerticalLine (secX, (float) b.getY(), (float) b.getBottom());
-                    }
-
-                    g.setFont (TakeUI::monoFont (10.0f));
-                    g.setColour (juce::Colour (0xFF5C5C6E));
-                    g.drawText (markers[i].name, r, juce::Justification::centred);
+                    TakeUI::text (g, markers[(size_t) i].name, TakeUI::font (9.5f), C::faint,
+                                  r.reduced (2.0f, 0.0f), juce::Justification::centred);
                 }
             }
-
-            g.setColour (juce::Colour (0xFF1E1E24));
-            g.drawHorizontalLine (b.getBottom() - 1, (float) b.getX(), (float) b.getRight());
         }
 
-        void drawWaveform (juce::Graphics& g, juce::Rectangle<int> b)
+        void drawWave (juce::Graphics& g, juce::Rectangle<float> b)
         {
-            g.setColour (juce::Colour (0xFF0D0D0F));
+            namespace C = TakeUI::Col;
+            g.setColour (C::sunken);
             g.fillRect (b);
-
-            if (!backingLoaded)
+            if (duration <= 0.0f)
             {
-                g.setFont (TakeUI::monoFont (10.0f));
-                g.setColour (juce::Colour (0xFF3A3A48));
-                g.drawText ("Waiting for backing track...", b, juce::Justification::centred);
-                g.setColour (juce::Colour (0xFF1E1E24));
-                g.drawHorizontalLine (b.getY(), (float) b.getX(), (float) b.getRight());
+                TakeUI::text (g, juce::String::fromUTF8 ("Waiting for backing track\xE2\x80\xA6"),
+                              TakeUI::font (10.0f), C::faint, b, juce::Justification::centred);
                 return;
             }
-
-            float bx   = (float) b.getX();
-            float bw   = (float) b.getWidth();
-            float cy   = (float) b.getCentreY();
-            float maxH = b.getHeight() * 0.40f;
-
-            if (punchActive && punchOut > punchIn)
+            // Placeholder shape (as in the reference) — not the track's real audio.
+            const float cy = b.getCentreY(), maxH = b.getHeight() * 0.4f;
+            g.setColour (Col (0xFF34343F));
+            for (float px = 1.0f; px < b.getWidth(); px += 3.0f)
             {
-                float px1 = bx + bw * juce::jlimit (0.0f, 1.0f, punchIn  / totalDuration);
-                float px2 = bx + bw * juce::jlimit (0.0f, 1.0f, punchOut / totalDuration);
-                g.setColour (juce::Colour (0xFFFFAA00).withAlpha (0.12f));
-                g.fillRect (px1, (float) b.getY(), px2 - px1, (float) b.getHeight());
-                g.setColour (juce::Colour (0xFFFFB340).withAlpha (0.75f));
-                g.drawLine (px1, (float) b.getY(), px1, (float) b.getBottom(), 1.5f);
-                g.drawLine (px2, (float) b.getY(), px2, (float) b.getBottom(), 1.5f);
+                const float t = px / b.getWidth();
+                float a = (std::sin (t * 23.4f) * 0.5f + std::cos (t * 11.7f) * 0.3f + std::sin (t * 47.1f) * 0.2f) * 0.5f + 0.5f;
+                a = juce::jlimit (0.06f, 1.0f, a) * maxH;
+                g.fillRect (b.getX() + px - 0.7f, cy - a, 1.4f, a * 2.0f);
             }
+            auto xAt = [&] (float sec) { return b.getX() + b.getWidth() * juce::jlimit (0.0f, 1.0f, sec / duration); };
 
-            float pxZoneL = (punchActive && punchOut > punchIn)
-                                ? bx + bw * juce::jlimit (0.0f, 1.0f, punchIn  / totalDuration) : -1.0f;
-            float pxZoneR = (punchActive && punchOut > punchIn)
-                                ? bx + bw * juce::jlimit (0.0f, 1.0f, punchOut / totalDuration) : -1.0f;
-
-            for (int px = b.getX(); px < b.getRight(); px += 3)
-            {
-                float t   = (float)(px - b.getX()) / bw;
-                float amp = (std::sin (t * 23.4f) * 0.5f
-                           + std::cos (t * 11.7f) * 0.3f
-                           + std::sin (t * 47.1f) * 0.2f) * 0.5f + 0.5f;
-                amp = juce::jlimit (0.05f, 1.0f, amp);
-                float hh = amp * maxH;
-
-                bool inPunch = (pxZoneL >= 0.0f && (float) px >= pxZoneL && (float) px < pxZoneR);
-                g.setColour (inPunch ? juce::Colour (0xFF4A4A5E) : juce::Colour (0xFF353542));
-                g.drawLine ((float) px, cy - hh, (float) px, cy + hh, 1.0f);
-            }
-
-            // Marker lines — drawn before playhead so playhead stays on top
-            g.setFont (TakeUI::monoFont (8.0f));
+            g.setColour (C::blue.withAlpha (0.28f));
             for (const auto& m : markers)
+                if (m.position > 0.0f)
+                    g.fillRect (xAt (m.position) - 0.5f, b.getY(), 1.0f, b.getHeight());
+
+            g.setColour (C::blue);
+            g.fillRect (xAt (playhead) - 0.8f, b.getY(), 1.6f, b.getHeight());
+
+            if (cursor >= 0.0f)  // the engineer's cursor in the DAW, live
             {
-                float mxF = bx + bw * juce::jlimit (0.0f, 1.0f, m.position / totalDuration);
-                g.setColour (juce::Colour (0xFF6A7ABE).withAlpha (0.7f));
-                g.drawLine (mxF, (float) b.getY(), mxF, (float) b.getBottom(), 1.0f);
-                g.setColour (juce::Colour (0xFF7A8ACE));
-                g.drawText (m.name, (int) mxF + 2, b.getY() + 1, 48, 10,
-                            juce::Justification::centredLeft);
+                const float x = xAt (cursor);
+                g.setColour (C::amber);
+                g.fillRect (x - 0.75f, b.getY(), 1.5f, b.getHeight());
+                juce::Path tri;
+                tri.addTriangle (x - 4.25f, b.getY(), x + 4.25f, b.getY(), x, b.getY() + 6.0f);
+                g.fillPath (tri);
             }
-
-            float phX = bx + bw * juce::jlimit (0.0f, 1.0f, playheadPct);
-            g.setColour (juce::Colour (0xFF4F8FFF));
-            g.drawLine (phX, (float) b.getY(), phX, (float) b.getBottom(), 1.5f);
-
-            g.setColour (juce::Colour (0xFF1E1E24));
-            g.drawHorizontalLine (b.getY(), bx, bx + bw);
         }
 
-        void drawRuler (juce::Graphics& g, juce::Rectangle<int> b)
+        void drawRuler (juce::Graphics& g, juce::Rectangle<float> b)
         {
-            g.setColour (juce::Colour (0xFF0D0D0F));
+            namespace C = TakeUI::Col;
+            g.setColour (C::sunken);
             g.fillRect (b);
-
-            g.setFont (TakeUI::monoFont (9.0f));
-            // Tick labels derived from the real track duration (totalDuration is
-            // updated from the loaded backing track; falls back to the default
-            // before one arrives).
+            g.setColour (C::line);
+            g.fillRect (b.getX(), b.getY(), b.getWidth(), 1.0f);
+            if (duration <= 0.0f) return;
+            const auto f = TakeUI::font (8.5f);
             for (int i = 0; i <= 4; ++i)
             {
-                float frac = i / 4.0f;
-                int   tx   = b.getX() + (int) (b.getWidth() * frac);
-
-                g.setColour (juce::Colour (0xFF3A3A48));
-                g.drawLine ((float) tx, (float) b.getY(),
-                            (float) tx, (float) (b.getY() + 4), 1.0f);
-
-                if (i < 4)
-                {
-                    for (int m = 1; m <= 3; ++m)
-                    {
-                        float mf = frac + (m / 4.0f) * 0.25f;
-                        int   mx = b.getX() + (int) (b.getWidth() * mf);
-                        g.setColour (juce::Colour (0xFF252530));
-                        g.drawLine ((float) mx, (float) b.getY(),
-                                    (float) mx, (float) (b.getY() + 2), 1.0f);
-                    }
-                }
-
-                g.setColour (juce::Colour (0xFF3A3A48));
-                g.drawText (TakeUI::formatMinSec (frac * totalDuration), tx - 16, b.getY() + 5, 32,
-                            b.getHeight() - 5, juce::Justification::centred);
+                const auto s = TakeUI::formatMinSec (duration * (float) i / 4.0f);
+                const float tw = TakeUI::textWidth (f, s);
+                float x = b.getX() + b.getWidth() * (float) i / 4.0f - tw / 2.0f;
+                if (i == 0) x = b.getX() + 4.0f;
+                if (i == 4) x = b.getRight() - 4.0f - tw;
+                TakeUI::text (g, s, f, C::ghost, { x, b.getY() + 4.0f, tw + 1.0f, 11.0f });
             }
-
-            g.setColour (juce::Colour (0xFF1E1E24));
-            g.drawHorizontalLine (b.getY(), (float) b.getX(), (float) b.getRight());
         }
     };
 
     //==========================================================================
+    // Now / Next section card.
+    class NowCard : public juce::Component
+    {
+    public:
+        std::vector<Marker> markers;
+        float playhead { 0.0f };
+
+        void paint (juce::Graphics& g) override
+        {
+            namespace C = TakeUI::Col;
+            const auto b = getLocalBounds().toFloat();
+            g.setColour (C::surface);
+            g.fillRoundedRectangle (b.reduced (0.5f), 8.0f);
+            g.setColour (C::line);
+            g.drawRoundedRectangle (b.reduced (0.5f), 8.0f, 1.0f);
+
+            int cur = -1, next = -1;
+            for (int i = 0; i < (int) markers.size(); ++i)
+            {
+                const float p = markers[(size_t) i].position;
+                if (p <= playhead + 0.01f) { if (cur < 0 || p >= markers[(size_t) cur].position) cur = i; }
+                else if (next < 0 || p < markers[(size_t) next].position) next = i;
+            }
+            const juce::String now = markers.empty() ? "No markers"
+                                   : cur >= 0 ? markers[(size_t) cur].name
+                                              : juce::String::fromUTF8 ("\xE2\x80\x94");
+
+            const auto tagF = TakeUI::font (9.0f, Weight::regular, 1.26f);
+            TakeUI::text (g, "NOW", tagF, C::muted, { 15.0f, 8.8f, 30.0f, 11.5f });
+            TakeUI::text (g, now, TakeUI::font (15.0f, Weight::semibold), markers.empty() ? C::muted : C::blue,
+                          { 45.0f, 2.3f, 200.0f, 19.5f });
+
+            if (next < 0) return;
+            const auto inF = TakeUI::font (11.0f);
+            const auto inS = "~" + juce::String (juce::jmax (0, juce::roundToInt (markers[(size_t) next].position - playhead))) + "s";
+            const auto name = markers[(size_t) next].name;
+            float x = b.getWidth() - 15.0f - TakeUI::textWidth (inF, inS);
+            TakeUI::text (g, inS, inF, C::faint, { x, 4.8f, TakeUI::textWidth (inF, inS) + 1.0f, 14.5f });
+            x -= 8.0f + TakeUI::textWidth (inF, name);
+            TakeUI::text (g, name, inF, C::text3, { x, 4.8f, TakeUI::textWidth (inF, name) + 1.0f, 14.5f });
+            x -= 8.0f + TakeUI::textWidth (tagF, "NEXT");
+            TakeUI::text (g, "NEXT", tagF, C::muted, { x, 7.3f, 30.0f, 11.5f });
+        }
+    };
+
+    //==========================================================================
+    // The six cue knobs. Dragging one sets the artist's own cue mix; the
+    // engineer's changes arrive through the /cue/params poll.
     class CueMixPanel : public juce::Component
     {
     public:
-        struct KnobDef
-        {
-            const char*  label;
-            const char*  param;
-            float        value;
-            juce::uint32 colour;
-        };
-
         CueMixPanel()
         {
-            knobs[0] = { "Reverb",  "reverb",        0.0f, 0xFFA78BFA };
-            knobs[1] = { "Rev mix", "reverbMix",    0.0f, 0xFFA78BFA };
-            knobs[2] = { "Delay",   "delay",         0.0f, 0xFF2DD4BF };
-            knobs[3] = { "Del mix", "delayMix",      0.0f, 0xFF2DD4BF };
-            knobs[4] = { "Comp",    "compression",   0.0f, 0xFFFFB340 };
-            knobs[5] = { "Cue vol", "volume",      100.0f, 0xFF3DDC84 };
+            knobs[0] = { "Reverb",  "reverb",      0.0f, TakeUI::Col::teal };
+            knobs[1] = { "Rev mix", "reverbMix",   0.0f, TakeUI::Col::teal };
+            knobs[2] = { "Delay",   "delay",       0.0f, TakeUI::Col::blue };
+            knobs[3] = { "Del mix", "delayMix",    0.0f, TakeUI::Col::blue };
+            knobs[4] = { "Comp",    "compression", 0.0f, TakeUI::Col::purple };
+            knobs[5] = { "Cue vol", "volume",    100.0f, TakeUI::Col::text };
         }
 
         void paint (juce::Graphics& g) override
         {
-            g.setColour (juce::Colour (0xFF18181C));
-            g.fillAll();
-
-            g.setColour (juce::Colour (0xFF222228));
-            g.drawHorizontalLine (0, 0.0f, (float) getWidth());
-
-            g.setFont (TakeUI::monoFont (9.0f));
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText ("Cue mix", 12, 6, 60, 12, juce::Justification::centredLeft);
-
-            float slotW = (float) getWidth() / 6.0f;
-            constexpr float kCy = 37.0f;
-
+            TakeUI::text (g, "CUE MIX", TakeUI::font (10.0f, Weight::regular, 1.0f), TakeUI::Col::muted,
+                          { 0.0f, 0.0f, 200.0f, 12.5f });
             for (int i = 0; i < 6; ++i)
             {
-                float cx = slotW * i + slotW * 0.5f;
-                drawKnob (g, cx, kCy, knobs[i].value,
-                          juce::Colour (knobs[i].colour), knobs[i].label,
-                          i == dragKnobIndex);
+                const float cx = centreX (i);
+                const auto& k = knobs[i];
+                g.setColour (Col (0xFF0E0E10));
+                g.fillEllipse (cx - 21.0f, kKnobY, 42.0f, 42.0f);
+                g.setColour (k.colour);
+                g.drawEllipse (cx - 20.0f, kKnobY + 1.0f, 40.0f, 40.0f, 2.0f);
+
+                const float a = juce::degreesToRadians (-135.0f + k.value * 2.7f);
+                const juce::Point<float> c (cx, kKnobY + 21.0f);
+                juce::Path tick;
+                tick.addRectangle (-1.0f, -16.0f, 2.0f, 13.0f);
+                g.fillPath (tick, juce::AffineTransform::rotation (a).translated (c));
+
+                TakeUI::text (g, k.label, TakeUI::font (9.5f), TakeUI::Col::text3,
+                              { cx - 30.0f, 69.5f, 60.0f, 12.0f }, juce::Justification::centred);
             }
         }
 
-        void resized() override {}
-
         void mouseDown (const juce::MouseEvent& e) override
         {
-            dragKnobIndex = knobIndexAt (e.x, e.y);
-            if (dragKnobIndex >= 0)
-            {
-                dragStartY     = e.y;
-                dragStartValue = knobs[dragKnobIndex].value;
-            }
+            drag = -1;
+            for (int i = 0; i < 6; ++i)
+                if (e.position.getDistanceFrom ({ centreX (i), kKnobY + 21.0f }) <= 21.0f)
+                    drag = i;
+            if (drag >= 0) { dragY = e.position.y; dragFrom = knobs[drag].value; }
         }
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            if (dragKnobIndex < 0) return;
-            float delta = (float)(dragStartY - e.y);
-            knobs[dragKnobIndex].value = juce::jlimit (0.0f, 100.0f, dragStartValue + delta);
+            if (drag < 0) return;
+            knobs[drag].value = juce::jlimit (0.0f, 100.0f, dragFrom + (dragY - e.position.y));
             repaint();
         }
 
         void mouseUp (const juce::MouseEvent&) override
         {
-            if (dragKnobIndex < 0) return;
-            int val = juce::roundToInt (knobs[dragKnobIndex].value);
-            std::string path = std::string ("/cue/local/") + knobs[dragKnobIndex].param
-                               + "/" + std::to_string (val);
-            std::thread ([path]() { rawHttpPost ("127.0.0.1", 5004, path.c_str()); }).detach();
-            dragKnobIndex = -1;
-            repaint();
+            if (drag < 0) return;
+            const auto path = juce::String ("/cue/local/") + knobs[drag].param + "/"
+                              + juce::String (juce::roundToInt (knobs[drag].value));
+            std::thread ([path] { TakeUI::http ("127.0.0.1", 5004, "POST", path, 1000); }).detach();
+            drag = -1;
         }
 
-        // Update a knob to a value pushed from the backend (engineer's change or
-        // the artist's own, read back). Skips the knob being dragged so a live
-        // drag isn't yanked by a poll, and only repaints on an actual change.
+        // A value from the backend (the engineer's change, or ours read back).
         void setParamValue (const juce::String& param, float value)
         {
             for (int i = 0; i < 6; ++i)
-            {
                 if (param == knobs[i].param)
                 {
-                    if (i == dragKnobIndex) return;  // don't fight a live drag
+                    if (i == drag) return;  // don't fight a live drag
                     value = juce::jlimit (0.0f, 100.0f, value);
-                    if (std::abs (knobs[i].value - value) > 0.01f)
-                    {
-                        knobs[i].value = value;
-                        repaint();
-                    }
+                    if (std::abs (knobs[i].value - value) > 0.01f) { knobs[i].value = value; repaint(); }
                     return;
                 }
-            }
         }
 
     private:
-        KnobDef knobs[6];
-        int     dragKnobIndex  { -1 };
-        int     dragStartY     { 0 };
-        float   dragStartValue { 0.0f };
+        struct Knob { const char* label; const char* param; float value; juce::Colour colour; };
+        static constexpr float kKnobY = 22.5f;
+        Knob  knobs[6];
+        int   drag { -1 };
+        float dragY { 0.0f }, dragFrom { 0.0f };
 
-        int knobIndexAt (int mx, int my) const
+        float centreX (int i) const
         {
-            float slotW = (float) getWidth() / 6.0f;
-            constexpr float kCy = 37.0f, kR = 16.0f;
-            for (int i = 0; i < 6; ++i)
-            {
-                float cx = slotW * i + slotW * 0.5f;
-                float dx = (float) mx - cx, dy = (float) my - kCy;
-                if (dx * dx + dy * dy <= kR * kR)
-                    return i;
-            }
-            return -1;
-        }
-
-        static void rawHttpPost (const char* host, int port, const char* path)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return;
-
-            struct timeval tv { 1, 0 };
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return;
-            }
-
-            char header[512];
-            ::snprintf (header, sizeof (header),
-                        "POST %s HTTP/1.0\r\n"
-                        "Host: %s\r\n"
-                        "Content-Length: 0\r\n"
-                        "Connection: close\r\n"
-                        "\r\n",
-                        path, host);
-            ::send (fd, header, ::strlen (header), 0);
-
-            char tmp[64];
-            while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
-            ::close (fd);
-        }
-
-        void drawKnob (juce::Graphics& g, float cx, float cy, float value,
-                       juce::Colour colour, const juce::String& label, bool active)
-        {
-            constexpr float r = 16.0f;
-
-            g.setColour (juce::Colour (0xFF0A0A0B));
-            g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
-
-            g.setColour (active ? colour.withAlpha (0.4f) : juce::Colour (0xFF2A2A32));
-            g.drawEllipse (cx - r + 0.5f, cy - r + 0.5f,
-                           (r - 0.5f) * 2.0f, (r - 0.5f) * 2.0f, 1.0f);
-
-            static const float kStart = juce::MathConstants<float>::pi * 1.2f;
-            static const float kEnd   = juce::MathConstants<float>::pi * 2.8f;
-            float angle = kStart + (value / 100.0f) * (kEnd - kStart);
-
-            g.setColour (colour);
-            g.drawLine (cx + std::sin (angle) * 3.0f, cy - std::cos (angle) * 3.0f,
-                        cx + std::sin (angle) * 12.0f, cy - std::cos (angle) * 12.0f,
-                        2.0f);
-
-            g.setFont (TakeUI::monoFont (9.0f));
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (label, (int) (cx - 28.0f), (int) (cy + r + 3.0f),
-                        56, 10, juce::Justification::centred);
-
-            g.setColour (colour.withAlpha (0.85f));
-            g.drawText (juce::String (juce::roundToInt (value)),
-                        (int) (cx - 20.0f), (int) (cy + r + 13.0f),
-                        40, 10, juce::Justification::centred);
+            const float col = ((float) getWidth() - 5.0f * 4.0f) / 6.0f;  // 6 columns, 4 px gaps
+            return (float) i * (col + 4.0f) + col / 2.0f;
         }
     };
 
     //==========================================================================
-    class SectionNowCard : public juce::Component
+    class EndSessionButton : public juce::Component
     {
     public:
-        void setMarkers  (const std::vector<Marker>& m) { markers = m; repaint(); }
-        void setPlayhead (float seconds)                { playheadSec = seconds; repaint(); }
-
+        std::function<void()> onClick;
         void paint (juce::Graphics& g) override
         {
-            auto b = getLocalBounds();
-
-            g.setColour (juce::Colour (0xFF18181C));
-            g.fillAll();
-
-            g.setColour (juce::Colour (0xFF222228));
-            g.drawHorizontalLine (0, 0.0f, (float) getWidth());
-
-            // Current section = the nearest marker at or before the playhead;
-            // next = the nearest one after it. Real Reaper markers, no order
-            // assumption — no placeholders.
-            int curIdx = -1, nextIdx = -1;
-            for (int i = 0; i < (int) markers.size(); ++i)
+            const auto b = getLocalBounds().toFloat().reduced (0.5f);
+            if (isMouseOver())
             {
-                const float p = markers[i].position;
-                if (p <= playheadSec + 0.01f)
-                {
-                    if (curIdx < 0 || p > markers[curIdx].position) curIdx = i;
-                }
-                else if (nextIdx < 0 || p < markers[nextIdx].position)
-                {
-                    nextIdx = i;
-                }
+                g.setColour (Col (0xFF161618));
+                g.fillRoundedRectangle (b, 8.0f);
             }
-
-            juce::String current = markers.empty() ? "No markers"
-                                 : curIdx >= 0     ? markers[curIdx].name
-                                                   : juce::String::fromUTF8 ("\xE2\x80\x94");  // em dash
-            juce::String nextText;
-            if (nextIdx >= 0)
-            {
-                int secs = juce::jmax (0, juce::roundToInt (markers[nextIdx].position - playheadSec));
-                nextText = "Next: " + markers[nextIdx].name + "  ~" + juce::String (secs) + "s";
-            }
-
-            int leftW = b.getWidth() / 2;
-            g.setFont (TakeUI::monoFont (14.0f, true));
-            g.setColour (juce::Colour (0xFF4F8FFF));
-            g.drawText (current, b.getX() + 12, b.getY(), leftW - 12, b.getHeight(),
-                        juce::Justification::centredLeft);
-
-            g.setFont (TakeUI::monoFont (10.0f));
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (nextText, b.getX() + leftW, b.getY(), leftW - 12, b.getHeight(),
-                        juce::Justification::centredRight);
+            g.setColour (TakeUI::Col::line2);
+            g.drawRoundedRectangle (b, 8.0f, 1.0f);
+            TakeUI::text (g, "End Session", TakeUI::font (12.0f, Weight::medium), Col (0xFFD4D4D6),
+                          getLocalBounds().toFloat(), juce::Justification::centred);
         }
-
-        void resized() override {}
-
-    private:
-        std::vector<Marker> markers;
-        float               playheadSec { 0.0f };
-    };
-
-    //==========================================================================
-    class HeartbeatThread : public juce::Thread
-    {
-    public:
-        HeartbeatThread() : juce::Thread ("TakeHeartbeat") {}
-
-        void setParams (const juce::String& host, const juce::String& code)
+        void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit  (const juce::MouseEvent&) override { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override
         {
-            relayHost = host;
-            sessionCode = code;
+            if (getLocalBounds().contains (e.getPosition()) && onClick) onClick();
         }
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                if (relayHost.isNotEmpty() && sessionCode.isNotEmpty())
-                {
-                    juce::String path = "/session/" + sessionCode + "/heartbeat";
-                    sendPost (relayHost.toRawUTF8(), 5010, path.toRawUTF8());
-                }
-                wait (5000);
-            }
-        }
-
-    private:
-        juce::String relayHost;
-        juce::String sessionCode;
-
-        static void sendPost (const char* host, int port, const char* path)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return;
-
-            struct timeval tv { 3, 0 };
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return;
-            }
-
-            const char* body    = "{\"role\":\"artist\"}";
-            const int   bodyLen = (int) ::strlen (body);
-
-            char header[512];
-            ::snprintf (header, sizeof (header),
-                        "POST %s HTTP/1.0\r\n"
-                        "Host: %s\r\n"
-                        "Content-Type: application/json\r\n"
-                        "Content-Length: %d\r\n"
-                        "Connection: close\r\n"
-                        "\r\n",
-                        path, host, bodyLen);
-            ::send (fd, header, ::strlen (header), 0);
-            ::send (fd, body, (size_t) bodyLen, 0);
-
-            char tmp[64];
-            while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
-            ::close (fd);
-        }
-    };
-
-    //==========================================================================
-    class TimecodePoller : public juce::Thread
-    {
-    public:
-        std::function<void(float, bool)> onResult;  // (pos, playing)
-        juce::String relayHost { "127.0.0.1" };
-
-        TimecodePoller() : juce::Thread ("TakeTimecodePoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                juce::String body;
-                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/timecode", body))
-                {
-                    auto json = juce::JSON::parse (body);
-                    if (json.isObject())
-                    {
-                        const float pos     = (float)(double) json["pos"];
-                        const bool  playing = (bool)          json["playing"];
-                        auto cb = onResult;
-                        if (cb)
-                            juce::MessageManager::callAsync ([cb, pos, playing]() mutable
-                            {
-                                cb (pos, playing);
-                            });
-                    }
-                }
-                wait (100);
-            }
-        }
-
-    private:
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 0, 200000 };  // 200ms — short timeout for fast local polling
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char    tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (
-                static_cast<const char*> (buf.getData()), (int) buf.getSize());
-            const int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    class StatusPoller : public juce::Thread
-    {
-    public:
-        std::function<void(bool, bool, int, int, float)> onResult;  // (connected, recording, take, latencyMs, backingDuration)
-
-        StatusPoller() : juce::Thread ("TakeStatusPoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                bool  connected       = false;
-                bool  recording       = false;
-                int   take            = 1;
-                int   latencyMs       = 0;
-                float backingDuration = 0.0f;
-
-                juce::String body;
-                auto t0 = juce::Time::getMillisecondCounter();
-                if (rawHttpGet ("127.0.0.1", 5004, "/status", body))
-                {
-                    latencyMs = (int)(juce::Time::getMillisecondCounter() - t0);
-                    connected = true;
-                    auto json = juce::JSON::parse (body);
-                    if (json.isObject())
-                    {
-                        recording       = (bool)          json["recording"];
-                        take            = (int)           json["take"];
-                        backingDuration = (float)(double) json["backing_duration"];
-                    }
-                }
-
-                // Copy callback by value so the lambda doesn't reference this thread object
-                auto cb = onResult;
-                if (cb)
-                    juce::MessageManager::callAsync ([cb, connected, recording, take, latencyMs, backingDuration]() mutable
-                    {
-                        cb (connected, recording, take, latencyMs, backingDuration);
-                    });
-
-                wait (2000);
-            }
-        }
-
-    private:
-        // Plain POSIX TCP request - avoids juce::URL which fires assertions on connection failure
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 2, 0 };
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
-
-            int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    class MeterPoller : public juce::Thread
-    {
-    public:
-        std::function<void(float, float)> onResult;  // (levelL, levelR) in dB
-
-        MeterPoller() : juce::Thread ("TakeMeterPoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                juce::String body;
-                if (rawHttpGet ("127.0.0.1", 5004, "/levels", body))
-                {
-                    auto json = juce::JSON::parse (body);
-                    if (json.isObject())
-                    {
-                        float l = juce::jlimit (-60.0f, 0.0f, (float)(double) json["l"]);
-                        float r = juce::jlimit (-60.0f, 0.0f, (float)(double) json["r"]);
-                        auto cb = onResult;
-                        if (cb)
-                            juce::MessageManager::callAsync ([cb, l, r]() mutable
-                            {
-                                cb (l, r);
-                            });
-                    }
-                }
-                wait (100);
-            }
-        }
-
-    private:
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 0, 200000 };  // 200ms timeout — fast local poll
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char    tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (
-                static_cast<const char*> (buf.getData()), (int) buf.getSize());
-            const int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    // Polls the local transport for the current cue-mix values so the knobs
-    // reflect the engineer's changes (and the artist's own), not just drags.
-    class CuePoller : public juce::Thread
-    {
-    public:
-        std::function<void(juce::var)> onResult;  // the /cue/params object
-
-        CuePoller() : juce::Thread ("TakeCuePoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                juce::String body;
-                if (rawHttpGet ("127.0.0.1", 5004, "/cue/params", body))
-                {
-                    auto json = juce::JSON::parse (body);
-                    if (json.isObject())
-                    {
-                        auto cb = onResult;
-                        if (cb)
-                            juce::MessageManager::callAsync ([cb, json]() mutable
-                            {
-                                cb (json);
-                            });
-                    }
-                }
-                wait (250);
-            }
-        }
-
-    private:
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 0, 200000 };  // 200ms timeout — fast local poll
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char    tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (
-                static_cast<const char*> (buf.getData()), (int) buf.getSize());
-            const int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    class MarkersPoller : public juce::Thread
-    {
-    public:
-        std::function<void(std::vector<Marker>)> onResult;
-        juce::String relayHost { "127.0.0.1" };
-
-        MarkersPoller() : juce::Thread ("TakeMarkersPoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                juce::String body;
-                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/markers", body))
-                {
-                    auto arr = juce::JSON::parse (body);
-                    if (arr.isArray())
-                    {
-                        std::vector<Marker> result;
-                        for (const auto& item : *arr.getArray())
-                        {
-                            if (item.isObject())
-                                result.push_back ({ item["name"].toString(),
-                                                   (float)(double) item["position"] });
-                        }
-                        auto cb = onResult;
-                        if (cb)
-                            juce::MessageManager::callAsync ([cb, result]() mutable
-                            {
-                                cb (result);
-                            });
-                    }
-                }
-                wait (5000);
-            }
-        }
-
-    private:
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 2, 0 };
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char    tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (
-                static_cast<const char*> (buf.getData()), (int) buf.getSize());
-            const int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    class PunchPoller : public juce::Thread
-    {
-    public:
-        std::function<void(float, float, bool)> onResult;  // (in, out, active)
-        juce::String relayHost { "127.0.0.1" };
-
-        PunchPoller() : juce::Thread ("TakePunchPoller") {}
-
-        void run() override
-        {
-            while (!threadShouldExit())
-            {
-                juce::String body;
-                if (rawHttpGet (relayHost.toRawUTF8(), 5010, "/punch", body))
-                {
-                    auto json = juce::JSON::parse (body);
-                    if (json.isObject())
-                    {
-                        float pIn    = (float)(double) json["in"];
-                        float pOut   = (float)(double) json["out"];
-                        bool  active = (bool)          json["active"];
-                        auto cb = onResult;
-                        if (cb)
-                            juce::MessageManager::callAsync ([cb, pIn, pOut, active]() mutable
-                            {
-                                cb (pIn, pOut, active);
-                            });
-                    }
-                }
-                wait (2000);
-            }
-        }
-
-    private:
-        static bool rawHttpGet (const char* host, int port, const char* path, juce::String& body)
-        {
-            int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-            if (fd < 0) return false;
-
-            struct timeval tv { 2, 0 };
-            ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-            ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-            struct sockaddr_in addr {};
-            addr.sin_family = AF_INET;
-            addr.sin_port   = htons ((uint16_t) port);
-            ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-            if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-            {
-                ::close (fd);
-                return false;
-            }
-
-            char req[256];
-            ::snprintf (req, sizeof (req),
-                        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                        path, host);
-            ::send (fd, req, ::strlen (req), 0);
-
-            juce::MemoryBlock buf;
-            char    tmp[512];
-            ssize_t n;
-            while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-                buf.append (tmp, (size_t) n);
-            ::close (fd);
-
-            if (buf.getSize() == 0) return false;
-
-            juce::String full = juce::String::fromUTF8 (
-                static_cast<const char*> (buf.getData()), (int) buf.getSize());
-            const int sep = full.indexOf ("\r\n\r\n");
-            if (sep < 0) return false;
-
-            body = full.substring (sep + 4).trim();
-            return body.isNotEmpty();
-        }
-    };
-
-    //==========================================================================
-    class CountdownTimer : public juce::Timer
-    {
-    public:
-        std::function<void()> onTick;
-        void timerCallback() override { if (onTick) onTick(); }
     };
 
 public:
@@ -1211,442 +643,303 @@ public:
     ArtistScreen()
     {
         setOpaque (true);
+        for (auto* c : std::initializer_list<juce::Component*> { &ring, &meter, &track, &nowCard, &cueMix, &endButton })
+            addAndMakeVisible (c);
 
-        addChildComponent (detailsPanel);
-        detailsPanel.onClose = [this] {
-            detailsVisible = false;
-            detailsPanel.setVisible (false);
-            applyWindowSize (false);
-            repaint();
+        endButton.onClick = [this]
+        {
+            const auto host = relayHost, code = relayCode;
+            if (code.isNotEmpty())
+                std::thread ([host, code] { TakeUI::http (host, 5010, "DELETE", "/session/" + code, 2000); }).detach();
+            if (onBack) onBack();
         };
 
-        addAndMakeVisible (recordRing);
-        addAndMakeVisible (levelMeter);   // stays at silence until real levels arrive
+        juce::Component::SafePointer<ArtistScreen> safe (this);
 
-        addAndMakeVisible (trackWindow);
-        addAndMakeVisible (sectionNow);
-        addAndMakeVisible (cueMixPanel);
-
-        // Wire status poll results back to UI components via SafePointer
-        juce::Component::SafePointer<ArtistScreen> safeThis (this);
-
-        countdownTimer.onTick = [safeThis]() mutable
+        // Local backend (this machine): transport state, engineer cursor, levels.
+        localPoller = std::make_unique<TakeUI::Poller> ("TakeLocal", 100, [safe]
         {
-            if (safeThis == nullptr) return;
-            safeThis->recordRing.countdownValue--;
-            if (safeThis->recordRing.countdownValue <= 0)
+            const auto st  = TakeUI::getJson ("127.0.0.1", 5004, "/status", 300);
+            const auto lvl = TakeUI::getJson ("127.0.0.1", 5004, "/levels", 300);
+            juce::MessageManager::callAsync ([safe, st, lvl]
             {
-                safeThis->countdownTimer.stopTimer();
-                safeThis->recordRing.countdownValue = -1;
-                safeThis->recordRing.isRecording    = true;
-            }
-            safeThis->recordRing.repaint();
-            safeThis->repaint();
-        };
-
-        statusPoller.onResult = [safeThis] (bool connected, bool recording, int take, int latencyMs, float backingDuration)
+                if (safe != nullptr) safe->applyLocal (st, lvl);
+            });
+        });
+        cuePoller = std::make_unique<TakeUI::Poller> ("TakeCue", 250, [safe]
         {
-            if (safeThis == nullptr) return;
-            safeThis->serverConnected           = connected;
-            safeThis->recordRing.takeNumber     = take;
-            safeThis->latencyMs                 = latencyMs;
-            // Backing track presence + length come from the local transport
-            // server (which loaded the file) — never from a filesystem path,
-            // which would hardcode where the repo lives on this machine.
-            const bool loaded = backingDuration > 0.0f;
-            if (loaded)
-                safeThis->trackWindow.totalDuration = backingDuration;
-            if (loaded != safeThis->trackWindow.backingLoaded)
+            const auto params = TakeUI::getJson ("127.0.0.1", 5004, "/cue/params", 300);
+            if (! params.isObject()) return;
+            juce::MessageManager::callAsync ([safe, params]
             {
-                safeThis->trackWindow.backingLoaded = loaded;
-                safeThis->trackWindow.repaint();
-            }
-
-            bool wasRecording = safeThis->lastBackendRecording;
-            safeThis->lastBackendRecording = recording;
-
-            if (recording && !wasRecording)
-            {
-                // false→true: kick off 3-2-1 countdown
-                safeThis->recordRing.countdownValue = 3;
-                safeThis->recordRing.isRecording    = false;
-                safeThis->countdownTimer.startTimer (1000);
-            }
-            else if (!recording)
-            {
-                // stopped or still not recording — cancel any running countdown
-                safeThis->countdownTimer.stopTimer();
-                safeThis->recordRing.countdownValue = -1;
-                safeThis->recordRing.isRecording    = false;
-            }
-            // true→true while counting: leave countdown running, don't reset
-
-            safeThis->recordRing.repaint();
-            safeThis->repaint();
-        };
-        statusPoller.startThread();
-
-        timecodePoller.onResult = [safeThis] (float pos, bool /*playing*/)
-        {
-            if (safeThis == nullptr) return;
-            const float dur = safeThis->trackWindow.totalDuration;
-            safeThis->trackWindow.playheadPct = (dur > 0.0f) ? juce::jlimit (0.0f, 1.0f, pos / dur)
-                                                             : 0.0f;
-            safeThis->trackWindow.repaint();
-            safeThis->sectionNow.setPlayhead (pos);   // drives the current/next section card
-        };
-        timecodePoller.startThread();
-
-        meterPoller.onResult = [safeThis] (float l, float r)
-        {
-            if (safeThis == nullptr) return;
-            safeThis->levelMeter.setLevel (l, r);
-        };
-
-        markersPoller.onResult = [safeThis] (std::vector<Marker> m)
-        {
-            if (safeThis == nullptr) return;
-            safeThis->trackWindow.setMarkers (m);
-            safeThis->sectionNow.setMarkers (m);   // same markers feed the section card
-        };
-        markersPoller.startThread();
-
-        punchPoller.onResult = [safeThis] (float in, float out, bool active)
-        {
-            if (safeThis == nullptr) return;
-            safeThis->trackWindow.setPunch (in, out, active);
-        };
-        punchPoller.startThread();
-
-        cuePoller.onResult = [safeThis] (juce::var params)
-        {
-            if (safeThis == nullptr) return;
-            if (auto* obj = params.getDynamicObject())
-                for (auto& prop : obj->getProperties())
-                    safeThis->cueMixPanel.setParamValue (prop.name.toString(),
-                                                         (float)(double) prop.value);
-        };
-        cuePoller.startThread();
+                if (safe == nullptr) return;
+                if (auto* obj = params.getDynamicObject())
+                    for (auto& p : obj->getProperties())
+                        safe->cueMix.setParamValue (p.name.toString(), (float) (double) p.value);
+            });
+        });
+        localPoller->startThread();
+        cuePoller->startThread();
     }
 
     ~ArtistScreen() override
     {
-        cuePoller.stopThread (500);
-        punchPoller.stopThread (500);
-        markersPoller.stopThread (500);
-        meterPoller.stopThread (500);
-        timecodePoller.stopThread (500);
-        heartbeatThread.stopThread (3000);
-        statusPoller.stopThread (3000);
+        for (auto* p : { &localPoller, &cuePoller, &timecodePoller, &relayPoller, &markersPoller, &heartbeat })
+            p->reset();
     }
 
     void setSessionCode (const juce::String& code) { sessionCode = code; repaint(); }
-    void setLevel       (float l, float r)          { levelMeter.setLevel (l, r); }
 
+    // Called once after joining: starts everything that talks to the relay on
+    // the engineer's machine.
     void setEngineerIP (const juce::String& ip, const juce::String& code)
     {
-        companionConnected = ip.isNotEmpty();
-        engineerConnected  = ip.isNotEmpty();
-        detailsPanel.setEngineerConnected (engineerConnected);
-        detailsPanel.setRelayHost (ip);
+        if (ip.isEmpty() || code.isEmpty()) return;
+        relayHost = ip;
+        relayCode = code;
+        juce::Component::SafePointer<ArtistScreen> safe (this);
 
-        if (ip.isNotEmpty() && code.isNotEmpty())
+        // Session file read by start_artist.py — relay host + code bootstrap
+        juce::File ("/tmp/take_session.json")
+            .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code
+                              + "\",\"written_at\":" + juce::String (juce::Time::currentTimeMillis()) + "}");
+
+        heartbeat = std::make_unique<TakeUI::Poller> ("TakeHeartbeat", 5000, [ip, code]
         {
-            relayCode = code;
-            relayHost = ip;
-            timecodePoller.relayHost = ip;
-            markersPoller.relayHost  = ip;
-            punchPoller.relayHost    = ip;
-            heartbeatThread.setParams (ip, code);
-            heartbeatThread.startThread();
-
-            if (!meterPoller.isThreadRunning())
-                meterPoller.startThread();
-
-            // Session file read by start_artist.py — relay host + code bootstrap
-            juce::File ("/tmp/take_session.json")
-                .replaceWithText ("{\"engineer_ip\":\"" + ip + "\",\"code\":\"" + code
-                                  + "\",\"written_at\":" + juce::String (juce::Time::currentTimeMillis()) + "}");
-        }
-
-        repaint();
+            TakeUI::http (ip, 5010, "POST", "/session/" + code + "/heartbeat", 3000, nullptr, "{\"role\":\"artist\"}");
+        });
+        timecodePoller = std::make_unique<TakeUI::Poller> ("TakeTimecode", 100, [safe, ip]
+        {
+            const auto tc = TakeUI::getJson (ip, 5010, "/timecode", 300);
+            if (! tc.isObject()) return;
+            const float pos = (float) (double) tc["pos"];
+            const bool playing = (bool) tc["playing"];
+            juce::MessageManager::callAsync ([safe, pos, playing]
+            {
+                if (safe != nullptr) safe->applyTimecode (pos, playing);
+            });
+        });
+        // Engineer heartbeat, the DAW's state and its armed track.
+        relayPoller = std::make_unique<TakeUI::Poller> ("TakeRelay", 1000, [safe, ip, code]
+        {
+            const auto session = TakeUI::getJson (ip, 5010, "/session/" + code + "/status", 1500);
+            const auto daw     = TakeUI::getJson (ip, 5010, "/reaper/status", 2500);
+            const auto tracks  = TakeUI::getJson (ip, 5010, "/tracks", 2500);
+            juce::MessageManager::callAsync ([safe, session, daw, tracks]
+            {
+                if (safe != nullptr) safe->applyRelay (session, daw, tracks);
+            });
+        });
+        markersPoller = std::make_unique<TakeUI::Poller> ("TakeMarkers", 5000, [safe, ip]
+        {
+            const auto arr = TakeUI::getJson (ip, 5010, "/markers", 2500);
+            if (! arr.isArray()) return;
+            std::vector<Marker> m;
+            for (const auto& item : *arr.getArray())
+                if (item.isObject())
+                    m.push_back ({ item["name"].toString(), (float) (double) item["position"] });
+            juce::MessageManager::callAsync ([safe, m]
+            {
+                if (safe == nullptr) return;
+                safe->track.markers = m;
+                safe->nowCard.markers = m;
+                safe->track.repaint();
+                safe->nowCard.repaint();
+            });
+        });
+        for (auto* p : { heartbeat.get(), timecodePoller.get(), relayPoller.get(), markersPoller.get() })
+            p->startThread();
     }
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colour (0xFF111113));
-        drawHeader (g);
-        drawConnectionDots (g, 44, kDotsRowH);
-        drawTakeLabel (g);
-        drawStatusBar (g);
+        namespace C = TakeUI::Col;
+        const float w = (float) getWidth();
+        g.fillAll (C::bg);
+
+        // Header: mark + wordmark, session code
+        {
+            const float cx = 89.0f, cy = 21.5f, r = 5.4f;
+            g.setColour (C::teal.withAlpha (0.15f));
+            g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
+            g.setColour (C::teal);
+            g.drawEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f, 1.62f);
+            TakeUI::text (g, "TAKE", TakeUI::font (13.0f, Weight::semibold, 0.39f), C::text, { 106.0f, 13.0f, 60.0f, 17.0f });
+
+            const auto codeF  = TakeUI::font (13.0f, Weight::semibold, 0.65f);
+            const auto labelF = TakeUI::font (9.5f, Weight::regular, 1.33f);
+            const float codeW = TakeUI::textWidth (codeF, sessionCode);
+            TakeUI::text (g, sessionCode, codeF, Col (0xFFF2F2F3), { w - 16.0f - codeW, 13.0f, codeW + 2.0f, 17.0f });
+            const float labelW = TakeUI::textWidth (labelF, "SESSION");
+            TakeUI::text (g, "SESSION", labelF, C::muted, { w - 16.0f - codeW - 8.0f - labelW, 17.0f, labelW + 2.0f, 12.0f });
+        }
+        hline (g, 43.0f);
+
+        // Connections
+        drawConnRow (g, 56.0f, "Engineer", {}, engineerStatus());
+        drawConnRow (g, 84.0f, dawName, dawSub(), dawStatus());
+        hline (g, 114.0f);
+
+        hline (g, 295.0f);            // under the meters
+        hline (g, 464.0f);            // above the cue mix
+        hline (g, (float) getHeight() - 65.0f);  // above the footer
     }
 
     void resized() override
     {
-        constexpr int kHeader     = 44;
-        constexpr int kStatus     = 32;
-        constexpr int kTrack      = 110;
-        constexpr int kSectionNow = 48;
-        constexpr int kCueMix     = 80;
-        constexpr int kPad        = 14;
-        constexpr int kRing       = 110;
-        constexpr int kLabelH     = 20, kLabelGap = 12;
-        constexpr int kMeterH     = 56, kMeterGap = 12;
-        constexpr int kBlock      = kRing + kLabelGap + kLabelH + kMeterGap + kMeterH;
-
-        int cw     = contentWidth();
-        int usable = getHeight() - kHeader - kDotsRowH - kStatus - kTrack - kSectionNow - kCueMix;
-        int top    = kHeader + kDotsRowH + juce::jmax (12, (usable - kBlock) / 2);
-        int cx     = (cw - kRing) / 2;
-
-        recordRing.setBounds (cx, top, kRing, kRing);
-
-        int meterY = top + kRing + kLabelGap + kLabelH + kMeterGap;
-        levelMeter.setBounds (kPad, meterY, cw - kPad * 2, kMeterH);
-
-        int bottomStack = getHeight() - kStatus;
-        cueMixPanel.setBounds (kPad, bottomStack - kCueMix,                        cw - kPad * 2, kCueMix);
-        sectionNow.setBounds  (kPad, bottomStack - kCueMix - kSectionNow,          cw - kPad * 2, kSectionNow);
-        trackWindow.setBounds (kPad, bottomStack - kCueMix - kSectionNow - kTrack, cw - kPad * 2, kTrack);
-
-        detailsPanel.setBounds (kBaseWidth, 0, 300, getHeight());
-    }
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        if (backBtnBounds().expanded (4).contains (e.getPosition()))
-        {
-            if (onBack) onBack();
-            return;
-        }
-
-        if (endSessionBtnBounds().expanded (4).contains (e.getPosition()))
-        {
-            auto code = relayCode.toStdString();
-            auto host = relayHost.toStdString();
-            if (!code.empty())
-                std::thread ([code, host]() {
-                    std::string path = "/session/" + code;
-                    rawHttpDelete (host.c_str(), 5010, path.c_str());
-                }).detach();
-            if (onBack) onBack();
-            return;
-        }
-
-        if (detailsBtnBounds().expanded (4).contains (e.getPosition()))
-        {
-            detailsVisible = !detailsVisible;
-            detailsPanel.setVisible (detailsVisible);
-            if (detailsVisible) detailsPanel.toFront (false);
-            applyWindowSize (detailsVisible);
-            repaint();
-        }
+        const int w = getWidth();
+        const auto pad = (int) RecordRing::kPad;
+        ring.setBounds (w / 2 - 52 - pad, 129 - pad, 104 + pad * 2, 104 + pad * 2);
+        meter.setBounds (20, 247, w - 40, 34);
+        track.setBounds (20, 308, w - 40, 109);
+        nowCard.setBounds (20, 427, w - 40, 24);
+        cueMix.setBounds (20, 478, w - 40, 84);
+        endButton.setBounds (20, getHeight() - 52, w - 40, 36);
     }
 
 private:
     //==========================================================================
-    static constexpr int kBaseWidth  = 400;
-    static constexpr int kBaseHeight = 620;
-    static constexpr int kDotsRowH   = 32;
+    struct Status { juce::String text; juce::Colour colour; bool on; };
 
-    int contentWidth() const { return juce::jmin (getWidth(), kBaseWidth); }
-
-    void applyWindowSize (bool withPanel)
+    // No local backend at all is reported on the Engineer row: without it
+    // nothing reaches or leaves this machine.
+    Status engineerStatus() const
     {
-        int w = kBaseWidth + (withPanel ? 300 : 0);
-        if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-            rw->setContentComponentSize (w, kBaseHeight);
+        namespace C = TakeUI::Col;
+        if (! backendUp)     return { "Take backend not running", C::faint, false };
+        if (engineerAlive)   return { "Connected", C::blue, true };
+        return { "Not connected", C::faint, false };
     }
 
-    juce::Rectangle<int> backBtnBounds() const
+    Status dawStatus() const
     {
-        return { 12, getHeight() - 28, 44, 20 };
+        namespace C = TakeUI::Col;
+        if (! dawReachable) return { "Not running", C::faint, false };
+        // Recording = the DAW is rolling and this machine is capturing the take.
+        if (dawPlaying && capturing) return { "Recording", C::teal, true };
+        if (dawPlaying)              return { "Playing", C::teal, true };
+        return { "Connected", C::teal, true };
     }
 
-    juce::Rectangle<int> endSessionBtnBounds() const
+    juce::String dawSub() const
     {
-        return { 62, getHeight() - 29, 72, 26 };
+        if (! dawReachable) return {};
+        if (armedTracks.isEmpty()) return "no track armed";
+        return armedTracks[0] + (armedTracks.size() > 1 ? " +" + juce::String (armedTracks.size() - 1) : juce::String());
     }
 
-    juce::Rectangle<int> detailsBtnBounds() const
+    void drawConnRow (juce::Graphics& g, float y, const juce::String& name, const juce::String& sub, const Status& s)
     {
-        return { contentWidth() - 58, getHeight() - 29, 44, 26 };
-    }
+        namespace C = TakeUI::Col;
+        const float w = (float) getWidth();
+        const auto nameF = TakeUI::font (12.5f);
+        const float nameW = TakeUI::textWidth (nameF, name);
+        TakeUI::text (g, name, nameF, C::text2, { 20.0f, y + 0.8f, nameW + 2.0f, 16.5f });
 
-    static void rawHttpDelete (const char* host, int port, const char* path)
-    {
-        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) return;
+        const auto statusF = TakeUI::font (11.0f);
+        const float statusW = TakeUI::textWidth (statusF, s.text);
+        const float statusX = w - 20.0f - statusW;
+        TakeUI::text (g, s.text, statusF, s.colour, { statusX, y + 1.8f, statusW + 2.0f, 14.5f });
+        g.setColour (s.on ? s.colour : C::faint);
+        g.fillEllipse (statusX - 6.0f - 7.0f, y + 5.5f, 7.0f, 7.0f);
 
-        struct timeval tv { 2, 0 };
-        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-        struct sockaddr_in addr {};
-        addr.sin_family = AF_INET;
-        addr.sin_port   = htons ((uint16_t) port);
-        ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
+        if (sub.isNotEmpty())
         {
-            ::close (fd);
-            return;
+            const float subX = 20.0f + nameW + 8.0f;
+            const float maxW = statusX - 13.0f - 12.0f - subX;
+            TakeUI::text (g, sub, TakeUI::font (10.5f), C::muted, { subX, y + 2.8f, juce::jmax (0.0f, maxW), 14.0f });
         }
-
-        char req[256];
-        ::snprintf (req, sizeof (req),
-                    "DELETE %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-                    path, host);
-        ::send (fd, req, ::strlen (req), 0);
-
-        char tmp[64];
-        while (::recv (fd, tmp, sizeof (tmp), 0) > 0) {}
-        ::close (fd);
     }
 
-    void drawHeader (juce::Graphics& g)
+    void hline (juce::Graphics& g, float y)
     {
-        g.setColour (juce::Colour (0xFF1E1E24));
-        g.fillRect (0, 43, getWidth(), 1);
+        g.setColour (TakeUI::Col::line);
+        g.fillRect (0.0f, y, (float) getWidth(), 1.0f);
+    }
 
-        g.setFont (TakeUI::monoFont (16.0f, true));
+    //==========================================================================
+    void applyLocal (const juce::var& st, const juce::var& lvl)
+    {
+        const bool up = st.isObject();
+        bool changed = up != backendUp;
+        backendUp = up;
+        if (up)
         {
-            const char* const  kL[] = { "T", "A", "K", "E", nullptr };
-            const juce::uint32 kC[] = { 0xFFF0F0F8, 0xFF3DDC84, 0xFF3DDC84, 0xFF3DDC84 };
-            constexpr float kSlot = 11.0f, kGap = 1.5f;
-            float lx = 12.0f;
-            for (int i = 0; kL[i]; ++i, lx += kSlot + kGap)
+            const bool rec  = (bool) st["recording"];
+            const int  cd   = (int) st["countdown"];
+            const int  take = (int) st["take"];
+            changed = changed || rec != capturing;
+            capturing = rec;
+            // Before a take: the next take's number; during it: this one's.
+            ring.take      = rec ? juce::jmax (1, take) : take + 1;
+            ring.countdown = rec ? cd : 0;
+            ring.recording = rec;
+            ring.repaint();
+
+            const float dur = (float) (double) st["backing_duration"];
+            const auto cur  = st["engineer_cursor"];
+            const float cursor = cur.isVoid() || cur.isUndefined() ? -1.0f : (float) (double) cur;
+            if (dur != track.duration || std::abs (cursor - track.cursor) > 0.0005f)
             {
-                g.setColour (juce::Colour (kC[i]));
-                g.drawText (kL[i], (int) lx, 0, (int) kSlot + 1, 44, juce::Justification::centredLeft);
+                track.duration = dur;
+                track.cursor   = cursor;
+                track.repaint();
             }
         }
-
-        {
-            auto pill = juce::Rectangle<int> (contentWidth() - 102, 11, 90, 22);
-            g.setColour (juce::Colour (0xFF18181C));
-            g.fillRoundedRectangle (pill.toFloat(), 4.0f);
-            g.setColour (juce::Colour (0xFF222228));
-            g.drawRoundedRectangle (pill.toFloat(), 4.0f, 1.0f);
-            g.setFont (TakeUI::monoFont (9.0f));
-            g.setColour (juce::Colour (0xFF7A7A8E));
-            g.drawText (sessionCode, pill, juce::Justification::centred);
-        }
+        if (lvl.isObject())
+            meter.setLevel (juce::jlimit (-60.0f, 0.0f, (float) (double) lvl["level"]));
+        if (changed) repaint (0, 44, getWidth(), 71);
     }
 
-    void drawConnectionDots (juce::Graphics& g, int rowY, int rowH)
+    void applyTimecode (float pos, bool playing)
     {
-        struct Dot { const char* label; bool on; int approxW; };
-        const Dot dots[] = {
-            { "Companion", companionConnected, 64 },
-            { "Server",    serverConnected,    44 },
-            { "Engineer",  engineerConnected,  58 },
-        };
-
-        constexpr int kPad = 14, kDot = 6, kGap = 5, kBetween = 16;
-        int totalW = 0;
-        for (auto& d : dots) totalW += kDot + kGap + d.approxW + kBetween;
-        totalW -= kBetween;
-
-        int cw   = contentWidth();
-        int x    = kPad + (cw - kPad * 2 - totalW) / 2;
-        int dotY = rowY + (rowH - kDot) / 2;
-
-        g.setFont (TakeUI::monoFont (10.0f));
-
-        for (auto& d : dots)
+        if (playing != dawPlaying)
         {
-            auto dotColour = d.on ? juce::Colour (0xFF3DDC84) : juce::Colour (0xFF2E2E3A);
-            if (d.on)
-            {
-                g.setColour (dotColour.withAlpha (0.11f));
-                g.fillEllipse ((float)(x - 5), (float)(dotY - 5), (float)(kDot + 10), (float)(kDot + 10));
-                g.setColour (dotColour.withAlpha (0.24f));
-                g.fillEllipse ((float)(x - 2), (float)(dotY - 2), (float)(kDot + 4), (float)(kDot + 4));
-            }
-            g.setColour (dotColour);
-            g.fillEllipse ((float) x, (float) dotY, (float) kDot, (float) kDot);
-
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText (d.label, x + kDot + kGap, rowY, d.approxW, rowH,
-                        juce::Justification::centredLeft);
-
-            x += kDot + kGap + d.approxW + kBetween;
+            dawPlaying = playing;
+            repaint (0, 44, getWidth(), 71);
+        }
+        if (std::abs (pos - track.playhead) > 0.001f)
+        {
+            track.playhead = pos;
+            nowCard.playhead = pos;
+            track.repaint();
+            nowCard.repaint();
         }
     }
 
-    void drawTakeLabel (juce::Graphics& g)
+    void applyRelay (const juce::var& session, const juce::var& daw, const juce::var& tracks)
     {
-        int y = recordRing.getBottom() + 12;
-        g.setFont (TakeUI::monoFont (12.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("T" + juce::String (recordRing.takeNumber),
-                    0, y, contentWidth(), 20, juce::Justification::centred);
+        engineerAlive = session.isObject() && (bool) session["engineer"];
+        dawReachable  = daw.isObject() && (bool) daw["reachable"];
+        if (daw.isObject() && daw["name"].toString().isNotEmpty())
+            dawName = daw["name"].toString();
+        if (tracks.isArray())
+        {
+            armedTracks.clear();
+            for (const auto& t : *tracks.getArray())
+                if ((bool) t["armed"])
+                    armedTracks.add (t["name"].toString());
+        }
+        repaint (0, 44, getWidth(), 71);
     }
 
-    void drawStatusBar (juce::Graphics& g)
-    {
-        int barY = getHeight() - 32;
-        g.setColour (juce::Colour (0xFF0A0A0B));
-        g.fillRect (0, barY, getWidth(), 32);
-        g.setColour (juce::Colour (0xFF1A1A20));
-        g.drawHorizontalLine (barY, 0.0f, (float) getWidth());
+    //==========================================================================
+    juce::String sessionCode;
+    juce::String relayHost { "127.0.0.1" }, relayCode;
 
-        g.setFont (TakeUI::monoFont (10.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        g.drawText ("<- Back", 12, barY, 44, 32, juce::Justification::centredLeft);
+    bool backendUp { false }, capturing { false };
+    bool engineerAlive { false }, dawReachable { false }, dawPlaying { false };
+    juce::String dawName { "Pro Tools" };
+    juce::StringArray armedTracks;
 
-        {
-            auto eb = endSessionBtnBounds();
-            g.setColour (juce::Colour (0xFF1A0808));
-            g.fillRoundedRectangle (eb.toFloat(), 4.0f);
-            g.setColour (juce::Colour (0xFF5C1A1A));
-            g.drawRoundedRectangle (eb.toFloat(), 4.0f, 1.0f);
-            g.setFont (TakeUI::monoFont (9.0f));
-            g.setColour (juce::Colour (0xFFFF4F4F));
-            g.drawText ("End session", eb, juce::Justification::centred);
-        }
+    RecordRing       ring;
+    LevelMeter       meter;
+    TrackView        track;
+    NowCard          nowCard;
+    CueMixPanel      cueMix;
+    EndSessionButton endButton;
 
-        {
-            auto db = detailsBtnBounds();
-            g.setColour (juce::Colour (detailsVisible ? 0xFF185FA5 : 0xFF1A1A1E));
-            g.fillRoundedRectangle (db.toFloat(), 4.0f);
-            g.setFont (TakeUI::monoFont (10.0f));
-            g.setColour (juce::Colour (0xFF5C5C6E));
-            g.drawText ("Details", db, juce::Justification::centred);
-        }
-
-        g.setFont (TakeUI::monoFont (11.0f));
-        g.setColour (juce::Colour (0xFF5C5C6E));
-        auto text = juce::String ("Latency ") + juce::String (latencyMs) + "ms"
-                    + "  |  Take T" + juce::String (recordRing.takeNumber);
-        g.drawText (text, 140, barY, contentWidth() - 198, 32,
-                    juce::Justification::centredLeft);
-    }
-
-    bool            detailsVisible        { false };
-    bool            companionConnected    { false };
-    bool            serverConnected       { false };
-    bool            engineerConnected     { false };
-    int             latencyMs             { 0 };
-    bool            lastBackendRecording  { false };
-    DetailsPanel    detailsPanel;
-    juce::String    sessionCode;   // set from the real joined session — never a placeholder
-    juce::String    relayCode;
-    juce::String    relayHost   { "127.0.0.1" };  // set in setEngineerIP(); used by pollers and end-session
-    RecordRing      recordRing;
-    LevelMeter      levelMeter;
-    TrackWindow     trackWindow;
-    SectionNowCard  sectionNow;
-    CueMixPanel     cueMixPanel;
-    HeartbeatThread heartbeatThread;
-    TimecodePoller  timecodePoller;
-    StatusPoller    statusPoller;
-    MeterPoller     meterPoller;
-    MarkersPoller   markersPoller;
-    PunchPoller     punchPoller;
-    CuePoller       cuePoller;
-    CountdownTimer  countdownTimer;
+    std::unique_ptr<TakeUI::Poller> localPoller, cuePoller, timecodePoller, relayPoller, markersPoller, heartbeat;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtistScreen)
 };

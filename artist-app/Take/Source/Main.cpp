@@ -8,6 +8,7 @@
 
 #include <JuceHeader.h>
 #include "MainComponent.h"
+#include "WindowStyle.h"
 
 //==============================================================================
 class TakeApplication  : public juce::JUCEApplication
@@ -75,6 +76,14 @@ public:
            #endif
 
             setVisible (true);
+
+           #if JUCE_MAC
+            if (auto* peer = getPeer())
+                takeStyleWindow (peer->getNativeHandle());
+            // The content now fills the whole window, title bar included —
+            // keep that at the design's 400 x 640.
+            setContentComponentSize (400, 640);
+           #endif
         }
 
         ~MainWindow() override

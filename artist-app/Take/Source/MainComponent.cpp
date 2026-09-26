@@ -3,7 +3,7 @@
 //==============================================================================
 MainComponent::MainComponent()
 {
-    setSize (400, 620);
+    setSize (400, 640);
     showScreen (Screen::ROLE_SELECT);
 }
 
@@ -54,7 +54,7 @@ void MainComponent::showScreen (Screen screen)
     addAndMakeVisible (*screenComponent);
     resized();
 
-    setSize (400, 620);
+    setSize (400, 640);
     if (auto* rw = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-        rw->setContentComponentSize (400, 620);
+        rw->setContentComponentSize (400, 640);
 }

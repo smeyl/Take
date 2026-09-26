@@ -53,8 +53,7 @@ def _get_sync_format():
 app = Flask(__name__)
 CORS(app)
 
-# "l"/"r" repeat "level" for artist-app builds that still draw L/R meters.
-levels = {"level": -60.0, "channel": INPUT_CHANNEL, "l": -60.0, "r": -60.0}
+levels = {"level": -60.0, "channel": INPUT_CHANNEL}
 
 _lock = threading.Lock()
 _recording = False
@@ -178,7 +177,7 @@ def _on_input(indata, frames, t, status):
     # Meter — that same input.
     _level_window.append(float(np.mean(mono ** 2)))
     ms = sum(_level_window) / len(_level_window)
-    levels["level"] = levels["l"] = levels["r"] = max(-60.0, min(0.0, 10.0 * math.log10(ms + 1e-12)))
+    levels["level"] = max(-60.0, min(0.0, 10.0 * math.log10(ms + 1e-12)))
 
     # Monitor — straight to the output callback (see _monitor above).
     _monitor.append(mono)

@@ -8,9 +8,19 @@
       <FILE id="SygshP" name="MainComponent.h" compile="0" resource="0" file="Source/MainComponent.h"/>
       <FILE id="fBQoZA" name="MainComponent.cpp" compile="1" resource="0"
             file="Source/MainComponent.cpp"/>
+      <FILE id="wsHdr1" name="WindowStyle.h" compile="0" resource="0" file="Source/WindowStyle.h"/>
+      <FILE id="wsMm02" name="WindowStyle.mm" compile="1" resource="0" file="Source/WindowStyle.mm"/>
     </GROUP>
     <GROUP id="{6F0B2D1E-8C4A-4E7B-9A3D-5C1E7B2A9F40}" name="Resources">
       <FILE id="tkIcon" name="AppIcon.png" compile="0" resource="0" file="Resources/AppIcon.png"/>
+      <FILE id="fntRg4" name="IBMPlexMono-Regular.ttf" compile="0" resource="1"
+            file="Resources/Fonts/IBMPlexMono-Regular.ttf"/>
+      <FILE id="fntMd5" name="IBMPlexMono-Medium.ttf" compile="0" resource="1"
+            file="Resources/Fonts/IBMPlexMono-Medium.ttf"/>
+      <FILE id="fntSb6" name="IBMPlexMono-SemiBold.ttf" compile="0" resource="1"
+            file="Resources/Fonts/IBMPlexMono-SemiBold.ttf"/>
+      <FILE id="fntBd7" name="IBMPlexMono-Bold.ttf" compile="0" resource="1"
+            file="Resources/Fonts/IBMPlexMono-Bold.ttf"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>
