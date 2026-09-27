@@ -9,8 +9,8 @@ import threading
 import requests
 from urllib.parse import urlparse
 
-# The relay runs on the engineer's machine. The host is resolved at startup
-# from the JUCE session file, TAKE_RELAY_HOST, or a prompt — see below.
+# The relay runs on the engineer's machine: its host comes from each join the
+# artist app writes to the session file, or TAKE_RELAY_HOST — see join().
 RELAY_PORT = 5010
 
 import ports
@@ -39,76 +39,181 @@ def get_local_ip():
         return s.getsockname()[0]
 
 
-def run_heartbeat(relay_url, code, stop_evt, on_dead):
-    engineer_was_alive = None
-    missed = 0
-    relay = urlparse(relay_url)
-    while not stop_evt.is_set():
-        # Time a TCP connect to the relay — one network round trip — for the
-        # backing-track advance (loop_latency.py).
-        try:
-            t = time.perf_counter()
-            socket.create_connection((relay.hostname, relay.port), timeout=3).close()
-            loop_latency.add_rtt(time.perf_counter() - t)
-        except OSError:
-            pass
-        try:
-            requests.post(f"{relay_url}/session/{code}/heartbeat",
-                          json={"role": "artist"}, timeout=3)
-        except requests.RequestException:
-            pass
-        try:
-            r = requests.get(f"{relay_url}/session/{code}/status", timeout=3)
-            if r.ok:
-                engineer_alive = r.json()["engineer"]
-                loop_latency.update_engineer(r.json().get("latency"))
-                if engineer_alive:
-                    if engineer_was_alive is False:
-                        print("✓ Engineer reconnected", flush=True)
-                    missed = 0
-                else:
-                    missed += 1
-                    if engineer_was_alive is True:
-                        print("⚠ Engineer disconnected", flush=True)
-                    if missed >= 5 and not stop_evt.is_set():
-                        on_dead()
-                        return
-                engineer_was_alive = engineer_alive
-        except requests.RequestException:
-            pass
-        stop_evt.wait(5)
+# The session this backend serves: the one the artist app joined last. The
+# app writes SESSION_FILE on every join, and this backend follows it — a
+# rejoin (after End Session, or to a new code) switches everything over, and
+# the timing figures from the previous session are dropped with it.
+session = {"code": None, "relay_url": None}
+_session_lock = threading.Lock()
 
 
-def _read_session_file():
-    """Wait — however long it takes — for the artist app to join a session
-    and write the session file (engineer IP + code). Joining can take a
-    while (finding the code, typing the engineer's address by hand), and the
-    backend is no use until it happens."""
+def _take_session_file():
+    """(engineer_ip, code) from a join the artist app has just written to
+    SESSION_FILE, consuming it; None if there isn't one. Ignores the copy this
+    backend writes back for the app (its "from" is "backend") and joins over
+    a minute old."""
+    try:
+        with open(SESSION_FILE) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if data.get("from") == "backend":
+        return None
+    try:
+        os.unlink(SESSION_FILE)
+    except OSError:
+        pass
+    written_at_ms = data.get("written_at", 0)
+    age_s = (time.time() * 1000 - written_at_ms) / 1000
+    if written_at_ms and age_s > 60:
+        print(f"Ignoring stale session file (age {age_s:.0f}s)", flush=True)
+        return None
+    ip, code = data.get("engineer_ip", ""), data.get("code", "")
+    return (ip, code) if ip and code else None
+
+
+def _wait_for_session_file():
+    """Wait — however long it takes — for the artist app to join a session.
+    Joining can take a while (finding the code, typing the engineer's address
+    by hand), and the backend is no use until it happens."""
     waited = 0
-    while True:
-        if os.path.exists(SESSION_FILE):
-            try:
-                with open(SESSION_FILE) as f:
-                    data = json.load(f)
-                written_at_ms = data.get("written_at", 0)
-                age_s = (time.time() * 1000 - written_at_ms) / 1000
-                if written_at_ms and age_s > 60:
-                    print(f"Ignoring stale session file (age {age_s:.0f}s)")
-                    os.unlink(SESSION_FILE)
-                    time.sleep(1)
-                    continue
-                os.unlink(SESSION_FILE)
-                ip = data.get("engineer_ip", "")
-                code = data.get("code", "")
-                if ip and code:
-                    return ip, code
-            except Exception:
-                pass
-        time.sleep(1)
+    while not stop_event.is_set():
+        joined = _take_session_file()
+        if joined:
+            return joined
+        stop_event.wait(1)
         waited += 1
         if waited % 60 == 0:
             print(f"Still waiting for the artist app to join a session "
                   f"({waited // 60} min)...", flush=True)
+    return None
+
+
+def join(ip, code):
+    """Join session `code` on the relay at `ip` and point everything at its
+    engineer. Returns True once joined; False if the relay can't be reached
+    within a minute or the session doesn't exist."""
+    # The relay lives on the engineer's machine: TAKE_RELAY_HOST if set,
+    # otherwise the engineer IP the artist app joined with.
+    relay_url = f"http://{os.environ.get('TAKE_RELAY_HOST') or ip}:{RELAY_PORT}"
+    print(f"Joining session {code} — relay {relay_url}", flush=True)
+    deadline = time.time() + 60
+    while True:
+        try:
+            resp = requests.post(f"{relay_url}/session/join",
+                                 json={"code": code, "ip": get_local_ip()}, timeout=5)
+            if resp.status_code == 404:
+                print(f"Session {code} doesn't exist (any more) — waiting for the "
+                      f"artist app to join another", flush=True)
+                return False
+            resp.raise_for_status()
+            break
+        except requests.RequestException:
+            if time.time() > deadline or stop_event.is_set():
+                print("Could not reach the engineer's relay for a minute — waiting "
+                      "for the artist app to join again", flush=True)
+                return False
+            print("Waiting for engineer...", flush=True)
+            stop_event.wait(3)
+    engineer_ip = resp.json()["engineer_ip"]
+    with _session_lock:
+        session.update(code=code, relay_url=relay_url)
+        # Figures from any previous session (another path, another engineer)
+        # would misplace the backing track; the heartbeat refills them.
+        loop_latency.reset()
+        watcher.TARGET_IP = engineer_ip
+        artist.TARGET_IP = engineer_ip
+        transport.RELAY_URL = relay_url  # Reaper record/stop commands route through the relay
+        transport.STREAM_TO = engineer_ip
+    # Tell the artist app the engineer's address (it pre-fills the manual
+    # address field from this); marked as ours so it isn't taken as a join.
+    with open(SESSION_FILE, "w") as f:
+        json.dump({"engineer_ip": engineer_ip, "code": code, "from": "backend",
+                   "written_at": int(time.time() * 1000)}, f)
+    print(f"Engineer found — {engineer_ip}\n"
+          f"  File transfer   : {engineer_ip}:{FILE_PORT}\n"
+          f"  Mic stream out  : {engineer_ip}:{STREAM_PORT}", flush=True)
+    return True
+
+
+def _drop_session(reason):
+    """Stop serving the current session (it's over, or the artist left): no
+    more heartbeats or mic stream, and its timing figures are forgotten."""
+    with _session_lock:
+        code, relay_url = session["code"], session["relay_url"]
+        session.update(code=None, relay_url=None)
+        transport.STREAM_TO = None
+        loop_latency.reset()
+    if code:
+        print(f"{reason} — waiting for the artist app to join again", flush=True)
+    return code, relay_url
+
+
+def leave():
+    """The artist app's End Session: only this side disconnects. The session
+    stays open on the relay — ending it is the engineer's action."""
+    code, relay_url = _drop_session("Left the session")
+    if code:
+        try:
+            requests.post(f"{relay_url}/session/{code}/leave", timeout=3)
+        except requests.RequestException:
+            pass
+
+
+def run_session(stop_evt):
+    """Heartbeat the session being served, and follow the artist app to a new
+    one whenever it joins again."""
+    engineer_was_alive = None
+    next_heartbeat = 0.0
+    while not stop_evt.is_set():
+        joined = _take_session_file()
+        if joined and join(*joined):
+            engineer_was_alive = None
+            next_heartbeat = 0.0
+        code, relay_url = session["code"], session["relay_url"]
+        if code and time.monotonic() >= next_heartbeat:
+            next_heartbeat = time.monotonic() + 5
+            engineer_was_alive = _heartbeat(relay_url, code, engineer_was_alive)
+        stop_evt.wait(1)
+
+
+def _heartbeat(relay_url, code, engineer_was_alive):
+    # Time a TCP connect to the relay — one network round trip — for the
+    # backing-track advance (loop_latency.py).
+    relay = urlparse(relay_url)
+    try:
+        t = time.perf_counter()
+        socket.create_connection((relay.hostname, relay.port), timeout=3).close()
+        rtt = time.perf_counter() - t
+    except OSError:
+        rtt = None
+    try:
+        requests.post(f"{relay_url}/session/{code}/heartbeat",
+                      json={"role": "artist"}, timeout=3)
+        r = requests.get(f"{relay_url}/session/{code}/status", timeout=3)
+    except requests.RequestException:
+        return engineer_was_alive
+    # A 404: the engineer ended the session (or replaced it with a new code).
+    ended = r.status_code == 404
+    with _session_lock:
+        if session["code"] != code:
+            return None   # switched sessions meanwhile — these figures aren't its
+        if not ended:
+            if rtt is not None:
+                loop_latency.add_rtt(rtt)
+            if r.ok:
+                loop_latency.update_engineer(r.json().get("latency"))
+    if ended:
+        _drop_session(f"Session {code} was ended by the engineer")
+        return None
+    if not r.ok:
+        return engineer_was_alive
+    engineer_alive = r.json()["engineer"]
+    if engineer_alive and engineer_was_alive is False:
+        print("✓ Engineer reconnected", flush=True)
+    elif not engineer_alive and engineer_was_alive:
+        print("⚠ Engineer disconnected — waiting for them to come back", flush=True)
+    return engineer_alive
 
 
 def run_file_receiver():
@@ -132,44 +237,14 @@ if __name__ == "__main__":
         (timecode.PORT,             "udp", "timecode"),
     ])
 
-    print("Waiting for session code from JUCE app...", flush=True)
-    TARGET_IP, code = _read_session_file()
-
-    # The relay lives on the engineer's machine: TAKE_RELAY_HOST if set,
-    # otherwise the engineer IP the artist app joined with.
-    relay_host = os.environ.get("TAKE_RELAY_HOST") or TARGET_IP
-    RELAY_URL = f"http://{relay_host}:{RELAY_PORT}"
-    print(f"Relay: {RELAY_URL}")
-
-    local_ip = get_local_ip()
-
-    MAX_WAIT = 60
-    start_time = time.time()
+    transport.on_leave = leave
+    print("Waiting for the artist app to join a session...", flush=True)
     while True:
-        try:
-            resp = requests.post(f"{RELAY_URL}/session/join",
-                                 json={"code": code, "ip": local_ip}, timeout=5)
-            resp.raise_for_status()
+        joined = _wait_for_session_file()
+        if joined is None:
+            sys.exit(0)
+        if join(*joined):
             break
-        except Exception as e:
-            elapsed = time.time() - start_time
-            if elapsed > MAX_WAIT:
-                print(f"Could not connect to relay after {MAX_WAIT}s. Is the engineer running?")
-                sys.exit(1)
-            print(f"Waiting for engineer... ({int(elapsed)}s)")
-            time.sleep(3)
-
-    TARGET_IP = resp.json()["engineer_ip"]
-    print(f"Engineer found — {TARGET_IP}")
-
-    # Write relay host so the JUCE app reads it before making its own join call
-    with open(SESSION_FILE, "w") as f:
-        json.dump({"engineer_ip": TARGET_IP, "code": code,
-                   "written_at": int(time.time() * 1000)}, f)
-
-    watcher.TARGET_IP = TARGET_IP
-    artist.TARGET_IP = TARGET_IP
-    transport.RELAY_URL = RELAY_URL  # Reaper record/stop commands route through the relay
 
     shutdown_reason = [None]
 
@@ -201,13 +276,8 @@ if __name__ == "__main__":
             daemon=True,
         ),
         threading.Thread(target=run_file_receiver, name="file-receiver", daemon=True),
-        threading.Thread(
-            target=run_heartbeat,
-            args=(RELAY_URL, code, stop_event,
-                  lambda: shutdown("Session ended — engineer disconnected")),
-            name="heartbeat",
-            daemon=True,
-        ),
+        threading.Thread(target=run_session, args=(stop_event,),
+                         name="session", daemon=True),
         threading.Thread(target=timecode.receiver, args=(stop_event,),
                          name="timecode", daemon=True),
     ]
@@ -216,8 +286,6 @@ if __name__ == "__main__":
 
     print("Take — artist ready")
     print(f"  Watching        : {WATCH_PATH}")
-    print(f"  File transfer   : {TARGET_IP}:{FILE_PORT}")
-    print(f"  Mic stream out  : {TARGET_IP}:{STREAM_PORT}")
     print(f"  Cue params      : UDP 0.0.0.0:{cue_receiver.PORT}")
     print(f"  Backing player  : {BACKING_PATH}")
     print(f"  Transport       : 0.0.0.0:{transport.PORT}")
@@ -231,10 +299,8 @@ if __name__ == "__main__":
     msg = shutdown_reason[0] or "Shutting down..."
     print(f"\n{msg}", flush=True)
 
-    try:
-        requests.delete(f"{RELAY_URL}/session/{code}", timeout=3)
-    except requests.RequestException:
-        pass
+    # Only this side leaves: the session is the engineer's to end.
+    leave()
 
     for t in threads:
         t.join(timeout=2)

@@ -647,11 +647,12 @@ public:
         for (auto* c : std::initializer_list<juce::Component*> { &ring, &meter, &track, &nowCard, &cueMix, &endButton })
             addAndMakeVisible (c);
 
+        // End Session disconnects only the artist: the local backend leaves
+        // the session (stops its heartbeat and mic stream, tells the relay).
+        // The session itself stays open — ending it is the engineer's action.
         endButton.onClick = [this]
         {
-            const auto host = relayHost, code = relayCode;
-            if (code.isNotEmpty())
-                std::thread ([host, code] { TakeUI::http (host, 5010, "DELETE", "/session/" + code, 2000); }).detach();
+            std::thread ([] { TakeUI::http ("127.0.0.1", 5004, "POST", "/session/leave", 2000); }).detach();
             if (onBack) onBack();
         };
 

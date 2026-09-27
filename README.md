@@ -81,9 +81,9 @@ The engineer app shows which track is armed next to the Pro Tools connection row
 ### If you are the artist
 
 1. Double-click **Take Artist.app**
-2. Enter the session code the engineer shared with you
+2. Enter the session code the engineer shared with you. On the same network that's all it takes; over the internet, also enter the engineer's address (the Tailscale address on their start screen)
 3. Put on headphones — you will hear yourself through the cue mix
-4. Perform when the engineer starts recording
+4. Perform when the engineer starts recording. **End Session** disconnects only you; the session stays open for you to rejoin until the engineer ends it
 
 Take records one input — the one your mic is on — from the Mac's default input device. To use an audio interface, set `TAKE_INPUT_DEVICE` to its name (or part of it); if your mic isn't on input 1, set `TAKE_INPUT_CHANNEL` to its input number (e.g. `2`). Only that input is recorded, streamed and metered: other inputs on the interface are never mixed in.
 
@@ -105,7 +105,7 @@ Take only acts when a take arrives, and only on the track that was armed:
 
 ### Live stream into Pro Tools
 
-While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one. The stream is held in a fixed 40 ms buffer against network jitter before it's played, so its delay stays constant; set `TAKE_STREAM_BUFFER_MS` to change it (more for a shaky connection, less for tighter monitoring).
+While the artist performs, the engineer backend plays their live mic stream into a virtual audio device so Pro Tools can monitor and record it on the armed track (the lossless take replaces that recording afterwards). By default that device is **Pro Tools Audio Bridge 2-A**; set `TAKE_STREAM_DEVICE` to use another one. The stream is held in a fixed buffer against network jitter before it's played, so its delay stays constant: 40 ms when the artist joined over the LAN, 120 ms over the internet (Tailscale). It's chosen when the artist joins; set `TAKE_STREAM_BUFFER_MS` to use one size for every connection (more for a shaky connection, less for tighter monitoring).
 
 So that you hear the artist in time with the session, the artist's backing track plays ahead of Pro Tools by the whole loop's delay: the network round trip, both machines' audio latencies, the stream buffer, and a fixed Pro Tools offset (`TAKE_DAW_INPUT_OFFSET_MS`, default 47 ms, mostly Pro Tools' own input-monitoring latency, which grows with its H/W buffer size). The amount is worked out when playback starts and held until it stops; the artist backend logs it. If the vocal sounds consistently early or late, adjust `TAKE_DAW_INPUT_OFFSET_MS` by that much.
 

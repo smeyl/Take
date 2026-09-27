@@ -192,18 +192,22 @@ public:
             const auto ip = relayHostEditor.getBounds().toFloat();
             TakeUI::text (g, "ENGINEER'S ADDRESS", labelF, C::muted, { 0.0f, ip.getY() - 20.0f, w, 12.0f },
                           juce::Justification::centred);
-            TakeUI::text (g, "Shown under the code on the engineer's start screen", hintF, C::faint,
+            TakeUI::text (g, "Over the internet: the Tailscale address on the engineer's screen", hintF, C::faint,
                           { 0.0f, ip.getBottom() + 8.0f, w, 14.0f }, juce::Justification::centred);
         }
         else
         {
-            TakeUI::text (g, "Can't connect? Enter the engineer's address", hintF, C::blue, manualLinkBounds(),
+            TakeUI::text (g, "Joining over the internet? Enter the engineer's address", hintF, C::blue, manualLinkBounds(),
                           juce::Justification::centred);
         }
 
         if (errorText.isNotEmpty())
-            TakeUI::text (g, errorText, TakeUI::font (11.0f), C::red,
-                          { 0.0f, (float) joinButton.getBottom() + 12.0f, w, 16.0f }, juce::Justification::centred);
+        {
+            g.setFont (TakeUI::font (11.0f));
+            g.setColour (C::red);
+            g.drawFittedText (errorText, juce::Rectangle<float> (24.0f, (float) joinButton.getBottom() + 12.0f, w - 48.0f, 30.0f).toNearestInt(),
+                              juce::Justification::centredTop, 2, 1.0f);
+        }
     }
 
     void resized() override
@@ -351,7 +355,9 @@ private:
                     if (safeThis == nullptr) return;
                     safeThis->setConnecting (false);
                     safeThis->setManualMode (true);
-                    safeThis->setError ("Couldn't find the engineer on this network");
+                    // The code alone only finds an engineer on the same network.
+                    safeThis->setError ("The engineer isn't on this network. Over the internet, "
+                                        "enter their address above as well as the code.");
                 });
                 return;
             }
@@ -379,7 +385,8 @@ private:
                 safeThis->setConnecting (false);
                 safeThis->setManualMode (true);  // let them try a manual address
                 safeThis->setError (statusCode == 404 ? "No session with that code — check it with the engineer"
-                                                      : "Could not reach the engineer");
+                                                      : "Could not reach the engineer at that address. "
+                                                        "Over the internet, check Tailscale is connected.");
             });
         }).detach();
     }

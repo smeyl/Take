@@ -26,6 +26,15 @@ artist = {"input_latency": None, "packet": None}
 engineer = {"receiver_ms": None, "daw_input_offset_ms": None}
 
 
+def reset():
+    """Forget the network and engineer figures — a new session (maybe over a
+    different path, to a different engineer) or none. The artist's own audio
+    figures stay."""
+    _rtts.clear()
+    for key in engineer:
+        engineer[key] = None
+
+
 def add_rtt(seconds):
     _rtts.append(seconds)
 

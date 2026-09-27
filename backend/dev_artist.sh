@@ -3,6 +3,9 @@ cd "$(dirname "$0")"
 
 rm -f /tmp/take_session.json
 
+# Replace any artist backend already running — including one still waiting
+# for a join, which holds no ports yet — so a stale one never serves alongside.
+pkill -f "start_artist.py" 2>/dev/null
 # Kill any leftover processes on our ports
 lsof -ti :5003 | xargs kill -9 2>/dev/null
 lsof -ti :5004 | xargs kill -9 2>/dev/null

@@ -1,4 +1,5 @@
 import ipv4  # noqa: F401 — IPv4-only HTTP lookups (NAT64 networks); must come first
+import ipaddress
 import os
 import signal
 import socket
@@ -26,11 +27,26 @@ STREAM_RATE = 44100   # the artist's live stream wire format
 MAX_PACKET = 4 * 1024 + 1  # 1 header byte + 1024 float32 samples (largest the sender makes)
 # Audio held in reserve against network jitter before the artist's stream is
 # played to the DAW. This is a fixed part of the monitoring delay: bigger
-# rides out a worse connection, smaller is tighter.
-STREAM_BUFFER_MS = float(os.environ.get("TAKE_STREAM_BUFFER_MS", "40"))
-# How far past the reserve the buffer may fill (a packet plus an audio block
-# arriving together) before the excess is dropped back down to the reserve.
-STREAM_EXCESS_MS = 15
+# rides out a worse connection, smaller is tighter. It's chosen by the path
+# the artist joined over, once per join: a LAN address gets the LAN reserve,
+# anything else (Tailscale's 100.x, a public address) the internet one.
+# Measured over Tailscale between two networks (one a phone hotspot): 40 ms
+# ran dry ~11 times a minute; 120 ms not once in normal conditions. It isn't
+# adapted to measured round-trip time: RTT doesn't predict the jitter (a 39 ms
+# round trip came with 430 ms stalls), and the reserve is part of the
+# artist's backing-track advance, fixed for a whole playback pass — resizing
+# it mid-pass would pull the vocal out of time. TAKE_STREAM_BUFFER_MS, if
+# set, is used for every path.
+STREAM_BUFFER_LAN_MS = 40
+STREAM_BUFFER_INTERNET_MS = 120
+STREAM_BUFFER_OVERRIDE_MS = (float(os.environ["TAKE_STREAM_BUFFER_MS"])
+                             if os.environ.get("TAKE_STREAM_BUFFER_MS") else None)
+# How far past the reserve the buffer may fill before the excess is dropped
+# back down to the reserve, as a fraction of the reserve. Over the internet
+# packets arrive in clumps as wide as the jitter the reserve is sized for, so
+# a fixed allowance (it was 15 ms) that fits a LAN dropped audio ~12 times a
+# minute at a 120 ms reserve.
+STREAM_EXCESS_FRACTION = 0.5
 # Once a second the average depth is checked: off the reserve by more than
 # this (audio lost upstream, or clock drift between the two machines) and it
 # is put back — silence added or audio dropped — so the delay stays fixed.
@@ -70,7 +86,15 @@ def follow_session(relay_url, stop_evt):
         if session and session["artist_ip"] and session["artist_ip"] != current["artist_ip"]:
             current["artist_ip"] = session["artist_ip"]
             bounce.TARGET_IP = session["artist_ip"]
+            artist_was_alive = None
             print(f"Artist connected — {session['artist_ip']}", flush=True)
+            set_stream_buffer(session["artist_ip"])
+        elif session and not session["artist_ip"] and current["artist_ip"]:
+            # The artist left (their End Session); the session stays open.
+            current["artist_ip"] = None
+            bounce.TARGET_IP = "127.0.0.1"
+            artist_was_alive = None
+            print("Artist left the session — waiting for them to rejoin", flush=True)
 
         if current["code"] and time.monotonic() >= next_heartbeat:
             next_heartbeat = time.monotonic() + 5
@@ -129,6 +153,13 @@ class _JitterBuffer:
         self.depth_sum = self.pulls = self.played = 0
         self.lock = threading.Lock()
 
+    def resize(self, target, limit):
+        """New reserve: waits to fill to it again, from what's buffered."""
+        with self.lock:
+            self.target, self.limit = target, limit
+            self.playing = False
+            self.depth_sum = self.pulls = self.played = 0
+
     def push(self, x):
         with self.lock:
             self.buf = np.concatenate([self.buf, x])
@@ -161,6 +192,46 @@ class _JitterBuffer:
                 self.depth_sum = self.pulls = self.played = 0
 
 
+# The stream receiver's jitter buffer, once its output device is open.
+_receiver = {"lock": threading.Lock(), "jitter": None, "rate": None, "out_ms": 0.0, "ms": None}
+
+
+def stream_buffer_ms(artist_ip):
+    """The reserve for an artist at this address (see STREAM_BUFFER_LAN_MS)."""
+    if STREAM_BUFFER_OVERRIDE_MS is not None:
+        return STREAM_BUFFER_OVERRIDE_MS
+    try:
+        lan = ipaddress.ip_address(artist_ip).is_private
+    except ValueError:
+        lan = True   # no artist yet
+    return STREAM_BUFFER_LAN_MS if lan else STREAM_BUFFER_INTERNET_MS
+
+
+def set_stream_buffer(artist_ip):
+    """Size the jitter buffer for the artist's path, and report the receiver's
+    delay to the relay — it's part of the artist's backing-track advance
+    (loop_latency.py), which picks it up with its next status check."""
+    with _receiver["lock"]:
+        jitter, rate = _receiver["jitter"], _receiver["rate"]
+        if jitter is None:
+            return
+        ms = stream_buffer_ms(artist_ip)
+        if ms != _receiver["ms"]:
+            _receiver["ms"] = ms
+            jitter.resize(round(ms / 1000 * rate), round(ms * (1 + STREAM_EXCESS_FRACTION) / 1000 * rate))
+            path = ("set by TAKE_STREAM_BUFFER_MS" if STREAM_BUFFER_OVERRIDE_MS is not None
+                    else "no artist yet" if not artist_ip
+                    else f"artist {artist_ip} on the "
+                         f"{'LAN' if ms == STREAM_BUFFER_LAN_MS else 'internet'}")
+            print(f"Stream receiver: {ms:.0f} ms jitter buffer ({path})", flush=True)
+        delay = ms + _receiver["out_ms"]
+    try:
+        requests.post(f"{RELAY_URL}/latency/receiver", json={"ms": delay}, timeout=3)
+    except requests.RequestException:
+        print("Stream receiver: couldn't report its delay to the relay — "
+              "the artist's backing track won't be advanced for it", flush=True)
+
+
 def run_stream_receiver():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -185,25 +256,17 @@ def run_stream_receiver():
             # Played by a callback at the device's own rate (no blocking
             # writes, whose buffering grows with every network hiccup).
             rate = int(sd.query_devices(dev_index)["default_samplerate"])
-            jitter = _JitterBuffer(round(STREAM_BUFFER_MS / 1000 * rate),
-                                   round((STREAM_BUFFER_MS + STREAM_EXCESS_MS) / 1000 * rate),
-                                   round(STREAM_TOLERANCE_MS / 1000 * rate), rate)
+            jitter = _JitterBuffer(0, 0, round(STREAM_TOLERANCE_MS / 1000 * rate), rate)
             resampler = Resampler(STREAM_RATE, rate)
             stream = sd.OutputStream(device=dev_index, samplerate=rate, channels=1,
                                      dtype="float32", blocksize=128, latency="low",
                                      callback=lambda out, frames, t, st: jitter.pull(out[:, 0]))
             stream.start()
             print(f"Stream receiver: artist mic → {dev_name} ({daw.NAME} input) @ "
-                  f"{rate} Hz, {STREAM_BUFFER_MS:.0f} ms jitter buffer + "
-                  f"{stream.latency * 1000:.1f} ms output", flush=True)
-            # Part of the artist's backing-track advance (loop_latency.py).
-            try:
-                requests.post(f"{RELAY_URL}/latency/receiver",
-                              json={"ms": STREAM_BUFFER_MS + stream.latency * 1000},
-                              timeout=3)
-            except requests.RequestException:
-                print("Stream receiver: couldn't report its delay to the relay — "
-                      "the artist's backing track won't be advanced for it", flush=True)
+                  f"{rate} Hz, {stream.latency * 1000:.1f} ms output", flush=True)
+            with _receiver["lock"]:
+                _receiver.update(jitter=jitter, rate=rate, out_ms=stream.latency * 1000)
+            set_stream_buffer(current["artist_ip"])
         except Exception as e:
             stream = None
             print(f"Stream receiver: opening {dev_name} failed ({e})")

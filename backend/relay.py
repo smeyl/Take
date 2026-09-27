@@ -191,6 +191,20 @@ def heartbeat(code):
     return jsonify({"ok": True})
 
 
+@app.route("/session/<code>/leave", methods=["POST"])
+def leave_session(code):
+    """The artist leaving (their End Session). Only their side disconnects:
+    the session stays open for them, or another artist, to join again —
+    ending it is the engineer's (DELETE /session/<code>), as starting it is."""
+    if code not in sessions:
+        return jsonify({"error": "session not found"}), 404
+    s = sessions[code]
+    log(f"Artist {s['artist_ip']} left session {code}")
+    s["artist_ip"] = None
+    s["heartbeats"]["artist"] = None
+    return jsonify({"ok": True})
+
+
 # The engineer side's share of the artist's backing-track advance (see
 # loop_latency.py), sent back to the artist with every status check.
 # TAKE_DAW_INPUT_OFFSET_MS covers the fixed delays Take can't see on the DAW

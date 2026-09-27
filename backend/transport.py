@@ -41,6 +41,11 @@ _SYNC_FORMAT_FILE = "/tmp/take_sync_format"
 # Relay on the engineer's machine — set by start_artist.py once the session is
 # joined. Reaper transport commands must run there, not on this machine.
 RELAY_URL = "http://127.0.0.1:5010"
+# Where the live mic stream goes: the engineer of the session joined, set by
+# start_artist.py; None while not in a session (nothing is sent).
+STREAM_TO = None
+# start_artist.py's handler for the artist app's End Session.
+on_leave = None
 
 
 def _get_sync_format():
@@ -102,7 +107,6 @@ def run_stream_from_transport():
     """Send the mic to the engineer: native-rate blocks from the input callback,
     resampled to 44.1 kHz int16 and packetised (the stream's wire format)."""
     import stream_sender
-    import watcher
     STREAM_PORT = 5002
     import socket as _socket
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
@@ -119,7 +123,9 @@ def run_stream_from_transport():
         while len(pending) >= STREAM_CHUNK:
             chunk, pending = pending[:STREAM_CHUNK], pending[STREAM_CHUNK:]
             pcm = (np.clip(chunk, -1.0, 1.0) * 32767.0).astype(np.int16)
-            sock.sendto(stream_sender.encode(pcm.tobytes()), (watcher.TARGET_IP, STREAM_PORT))
+            target = STREAM_TO
+            if target:
+                sock.sendto(stream_sender.encode(pcm.tobytes()), (target, STREAM_PORT))
 
 
 def _writer(sf_file, stop_evt):
@@ -375,6 +381,14 @@ def status():
         return jsonify({"recording": active, "take": _take, "countdown": countdown,
                         "backing_duration": round(backing_player.duration, 3),
                         "engineer_cursor": timecode.state["cursor"]})
+
+
+@app.route("/session/leave", methods=["POST"])
+def leave_session():
+    """The artist app's End Session: this side leaves; the session stays open."""
+    if on_leave:
+        on_leave()
+    return jsonify({"ok": True})
 
 
 @app.route("/levels", methods=["GET"])

@@ -4,7 +4,8 @@ import { LogoMark, RefreshIcon } from "./icons";
 const RELAY = "http://localhost:5010";
 
 // The engineer's start screen: the session code to give the artist, the
-// address to give them if their app can't find this machine, and Start.
+// address they also need over the internet (the code alone only finds this
+// machine on the same network), and Start.
 // Shown at launch and after End Session. The engineer backend follows
 // whichever session is current, so "Generate new code" is safe at any time.
 export default function SessionScreen({ onStart }) {
@@ -119,11 +120,11 @@ export default function SessionScreen({ onStart }) {
         </div>
 
         <p className="start-help">
-          Give the artist this code — their Take app finds you on the network.
+          Give the artist this code. On the same network, their Take app finds you with it.
         </p>
         {(addresses.length > 0 || engineerIP) && (
           <div className="start-addrs">
-            <p className="start-help start-addr">If it can't, they can enter an address instead:</p>
+            <p className="start-help start-addr">Over the internet the code isn't enough — they also enter your address:</p>
             {(addresses.length ? addresses : [{ kind: "lan", ip: engineerIP }]).map(a => (
               <p key={a.ip} className="start-help start-addr">
                 {a.kind === "tailscale" ? "Over the internet (Tailscale)" : "On the same network"}{" "}
