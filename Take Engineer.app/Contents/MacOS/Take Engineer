@@ -1,6 +1,7 @@
 #!/bin/bash
-# One Terminal window: backend runs in the background (&), then the Electron
-# UI runs in the foreground. Output shows in the window and is appended to
+# One Terminal window: first_run.sh sets Take up if this is a fresh copy (and
+# stops here if it can't), then the backend runs in the background (&) and the
+# Electron UI runs in the foreground. Output shows in the window and is appended to
 # logs/engineer.log (backend) and logs/electron.log (UI); PYTHONUNBUFFERED
 # keeps the backend's output live through the pipe.
 #
@@ -14,7 +15,7 @@ mkdir -p "$LOGS"
 
 osascript <<EOF
 tell application "Terminal"
-    do script "export PYTHONUNBUFFERED=1; (/bin/bash \"$ROOT/backend/dev_engineer.sh\" 2>&1 | tee -a \"$LOGS/engineer.log\") & sleep 5 && cd \"$ROOT/engineer-app\" && npm start 2>&1 | tee -a \"$LOGS/electron.log\""
+    do script "export PYTHONUNBUFFERED=1; /bin/bash \"$ROOT/backend/first_run.sh\" engineer && { (/bin/bash \"$ROOT/backend/dev_engineer.sh\" 2>&1 | tee -a \"$LOGS/engineer.log\") & sleep 5 && cd \"$ROOT/engineer-app\" && npm start 2>&1 | tee -a \"$LOGS/electron.log\"; }"
 end tell
 EOF
 
