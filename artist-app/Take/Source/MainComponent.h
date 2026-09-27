@@ -192,7 +192,7 @@ public:
             const auto ip = relayHostEditor.getBounds().toFloat();
             TakeUI::text (g, "ENGINEER'S ADDRESS", labelF, C::muted, { 0.0f, ip.getY() - 20.0f, w, 12.0f },
                           juce::Justification::centred);
-            TakeUI::text (g, "Over the internet: the Tailscale address on the engineer's screen", hintF, C::faint,
+            TakeUI::text (g, "The Tailscale address on the engineer's start screen", hintF, C::faint,
                           { 0.0f, ip.getBottom() + 8.0f, w, 14.0f }, juce::Justification::centred);
         }
         else
@@ -356,8 +356,8 @@ private:
                     safeThis->setConnecting (false);
                     safeThis->setManualMode (true);
                     // The code alone only finds an engineer on the same network.
-                    safeThis->setError ("The engineer isn't on this network. Over the internet, "
-                                        "enter their address above as well as the code.");
+                    safeThis->setError ("Not found on this network. Over the internet, "
+                                        "enter the engineer's address too.");
                 });
                 return;
             }
@@ -385,8 +385,8 @@ private:
                 safeThis->setConnecting (false);
                 safeThis->setManualMode (true);  // let them try a manual address
                 safeThis->setError (statusCode == 404 ? "No session with that code — check it with the engineer"
-                                                      : "Could not reach the engineer at that address. "
-                                                        "Over the internet, check Tailscale is connected.");
+                                                      : "Can't reach that address. Over the internet, "
+                                                        "check Tailscale is connected.");
             });
         }).detach();
     }
