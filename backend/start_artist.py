@@ -136,7 +136,7 @@ def join(ip, code):
     return True
 
 
-def _drop_session(reason):
+def _drop_session(reason, waiting=True):
     """Stop serving the current session (it's over, or the artist left): no
     more heartbeats or mic stream, and its timing figures are forgotten."""
     with _session_lock:
@@ -145,14 +145,15 @@ def _drop_session(reason):
         transport.STREAM_TO = None
         loop_latency.reset()
     if code:
-        print(f"{reason} — waiting for the artist app to join again", flush=True)
+        print(f"{reason} — waiting for the artist app to join again" if waiting else reason,
+              flush=True)
     return code, relay_url
 
 
-def leave():
+def leave(waiting=True):
     """The artist app's End Session: only this side disconnects. The session
     stays open on the relay — ending it is the engineer's action."""
-    code, relay_url = _drop_session("Left the session")
+    code, relay_url = _drop_session("Left the session", waiting)
     if code:
         try:
             requests.post(f"{relay_url}/session/{code}/leave", timeout=3)
@@ -258,6 +259,8 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGINT, lambda sig, frame: shutdown())
     signal.signal(signal.SIGTERM, lambda sig, frame: shutdown())
+    # Closing the Terminal window it runs in (Take Artist.app) — leave cleanly.
+    signal.signal(signal.SIGHUP, lambda sig, frame: shutdown())
 
     threads = [
         threading.Thread(target=run_watcher, name="watcher", daemon=True),
@@ -300,7 +303,7 @@ if __name__ == "__main__":
     print(f"\n{msg}", flush=True)
 
     # Only this side leaves: the session is the engineer's to end.
-    leave()
+    leave(waiting=False)
 
     for t in threads:
         t.join(timeout=2)
