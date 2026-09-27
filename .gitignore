@@ -17,9 +17,7 @@ assets/*.png
 assets/*.icns
 assets/*.iconset
 
-# Xcode build intermediates (regenerated on every build) — never commit these.
-artist-app/Take/Builds/MacOSX/build/Take.build/
-artist-app/Take/Builds/MacOSX/build/XCBuildData/
-# Compiled artist app — untracked; build it locally with xcodebuild (see
-# artist-app/Take/Builds/MacOSX) or launch via start_take_artist.sh after building.
-artist-app/Take/Builds/MacOSX/build/Debug/Take.app
+
+# Xcode build output of the artist app — never committed. The app a fresh
+# clone runs is artist-app/prebuilt/Take.app (refresh it: artist-app/build_prebuilt.sh).
+artist-app/Take/Builds/MacOSX/build/

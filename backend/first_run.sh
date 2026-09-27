@@ -49,17 +49,10 @@ if [ "$ROLE" = "engineer" ] && [ ! -d "$ROOT/engineer-app/node_modules" ]; then
     echo ""
 fi
 
-if [ "$ROLE" = "artist" ]; then
-    APP="$ROOT/artist-app/Take/Builds/MacOSX/build/Debug/Take.app"
-    if [ ! -d "$APP" ]; then
-        echo "The artist app isn't in this copy of Take (it isn't stored in the repo)."
-        echo "Put Take.app here — e.g. unzip the Take-Artist-app.zip you were sent:"
-        echo ""
-        echo "    $APP"
-        echo ""
-        echo "or build it in Xcode (artist-app/Take/Builds/MacOSX/Take.xcodeproj), then open Take Artist again."
-        exit 1
-    fi
+if [ "$ROLE" = "artist" ] && [ -z "$(/bin/bash "$BACKEND/artist_app_path.sh")" ]; then
+    echo "The artist app is missing from this copy of Take — artist-app/prebuilt/Take.app"
+    echo "should come with it. Update your copy (git pull), or build it: artist-app/build_prebuilt.sh"
+    exit 1
 fi
 
 exit 0

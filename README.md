@@ -58,24 +58,13 @@ git clone https://github.com/smeyl/Take
 cd Take
 ```
 
-### 2. If you are the engineer
+### 2. Open the app
 
-```bash
-cd backend
-./setup.sh           # Python dependencies, including py-ptsl
+Double-click **Take Engineer.app** (engineer) or **Take Artist.app** (artist) in the cloned folder. The first time, it sets Take up in its Terminal window before starting — the Python packages via `backend/setup.sh`, and for the engineer the desktop app's packages (`npm install`). If something is missing (Homebrew, Node.js), it says what to install and stops; after that it starts straight away.
 
-cd ../engineer-app
-npm install          # desktop app dependencies
-```
+The artist app comes built with the repo (`artist-app/prebuilt/Take.app`, Apple Silicon and Intel) — no Node.js, Xcode or Pro Tools needed on the artist's machine. It isn't notarized, so the first time macOS may refuse to open it: right-click `Take.app` → **Open** once.
 
-### 3. If you are the artist
-
-```bash
-cd backend
-./setup.sh          # installs Python dependencies
-```
-
-That's it — the artist app (Take Artist.app) is already built and ready to run. No Node.js, Xcode or Pro Tools needed on the artist's machine.
+You can also run the setup yourself: `cd backend && ./setup.sh` (plus `cd engineer-app && npm install` for the engineer).
 
 ## Running a session
 

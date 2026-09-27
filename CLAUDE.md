@@ -58,6 +58,10 @@ or changing a port, update PORTS.md in the same change.
   clean them up unless the user explicitly asked to keep them.
 - **Never leave debug print statements in committed code.** Remove `print(...)` /
   `console.log(...)` debugging before considering a change done.
+- **After changing the artist app (JUCE), refresh the committed build:** run
+  `artist-app/build_prebuilt.sh` and commit `artist-app/prebuilt/Take.app` with
+  the source change. A fresh clone runs that committed app — artists don't
+  have Xcode or JUCE — so a stale one ships old behaviour.
 - **Test changes before declaring them done, whenever possible.** Run the
   affected path (or at least the relevant script/build) and report the actual
   result. If you couldn't test something, say so plainly.
