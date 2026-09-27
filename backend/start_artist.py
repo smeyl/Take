@@ -1,3 +1,4 @@
+import ipv4  # noqa: F401 — IPv4-only HTTP lookups (NAT64 networks); must come first
 import json
 import os
 import signal
