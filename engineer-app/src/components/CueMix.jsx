@@ -28,7 +28,7 @@ export default function CueMix({ cue, onChange, variant = "embedded" }) {
       {KNOBS.map(([label, k, color]) => (
         <Knob
           key={k} label={label} value={cue[k]} color={color}
-          size={popout ? 46 : 42} showValue={popout}
+          showValue={popout}
           onChange={v => onChange(k, v)}
         />
       ))}

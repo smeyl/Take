@@ -68,13 +68,12 @@ button:disabled{cursor:default}
 .cue-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 8px;padding:8px 20px 18px}
 
 .knob-wrap{display:flex;flex-direction:column;align-items:center;gap:5px}
-.knob{border-radius:50%;border:2px solid #3a3a45;position:relative;background:#0e0e10;cursor:ns-resize}
-.knob{box-sizing:content-box}
-.knob-tick{position:absolute;left:50%;width:2px;transform-origin:bottom}
+/* Same knob as the artist app: 42 px outer (border included), tick pivoting
+   on the centre — top 3 px inside the border + 16 px origin = centre. */
+.knob{box-sizing:border-box;width:42px;height:42px;border-radius:50%;border:2px solid #3a3a45;position:relative;background:#0e0e10;cursor:ns-resize}
+.knob-tick{position:absolute;left:50%;top:3px;width:2px;height:13px;transform-origin:50% 16px}
 .knob-lbl{font-size:9.5px;color:#9a9aa0}
 .knob-val{font-size:10px;color:#4d4d52}
-.knob-wrap.lg{gap:6px}
-.knob-wrap.lg .knob-lbl{font-size:10.5px}
 
 .takes-block{flex-grow:1;display:flex;flex-direction:column;min-height:0}
 .takes-hdr{padding:14px 20px 8px}
