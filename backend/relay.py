@@ -1,5 +1,8 @@
+import ipaddress
 import json
 import os
+import re
+import subprocess
 import random
 import socket as _socket
 import string
@@ -45,6 +48,34 @@ def get_local_ip():
     with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as s:
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
+
+
+_TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def tailscale_ips():
+    """This machine's Tailscale addresses: 100.64.0.0/10 on a utun
+    interface (how the Tailscale app shows up on macOS). Empty if Tailscale
+    isn't running."""
+    try:
+        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    ips, iface = [], None
+    for line in out.splitlines():
+        if line and not line[0].isspace():
+            iface = line.split(":", 1)[0]
+        m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+        if m and iface and iface.startswith("utun") and ipaddress.ip_address(m.group(1)) in _TAILSCALE_NET:
+            ips.append(m.group(1))
+    return ips
+
+
+def local_addresses():
+    """Addresses the artist can type to reach this machine when discovery
+    can't find it: Tailscale first (works across the internet), then the LAN."""
+    return ([{"kind": "tailscale", "ip": ip} for ip in tailscale_ips()]
+            + [{"kind": "lan", "ip": get_local_ip()}])
 
 
 def _resolve_ip(ip, fallback):
@@ -96,7 +127,7 @@ def new_session():
     # engineer_ip is returned so the engineer UI can show it next to the code —
     # the artist needs both to join, and the relay already resolved it to this
     # machine's LAN address.
-    return jsonify({"code": code, "engineer_ip": engineer_ip})
+    return jsonify({"code": code, "engineer_ip": engineer_ip, "addresses": local_addresses()})
 
 
 @app.route("/session/current", methods=["GET"])
@@ -108,7 +139,8 @@ def current_session():
     if not sessions:
         return jsonify({"error": "no session"}), 404
     code, s = max(sessions.items(), key=lambda x: x[1]["created_at"])
-    return jsonify({"code": code, "engineer_ip": s["engineer_ip"], "artist_ip": s["artist_ip"]})
+    return jsonify({"code": code, "engineer_ip": s["engineer_ip"], "artist_ip": s["artist_ip"],
+                    "addresses": local_addresses()})
 
 
 @app.route("/session/join", methods=["POST"])
@@ -126,7 +158,11 @@ def join_session():
     if code not in sessions:
         return jsonify({"error": "session not found"}), 404
     sessions[code]["artist_ip"] = artist_ip
-    engineer_ip = sessions[code]["engineer_ip"]
+    # Answer with the address the artist used to reach this relay — over
+    # Tailscale or the internet that's not this machine's LAN IP, and the
+    # artist sends its takes and mic stream to whatever we answer here.
+    reached = request.host.rsplit(":", 1)[0].strip("[]")
+    engineer_ip = _resolve_ip(reached, sessions[code]["engineer_ip"])
     log(f"Artist {artist_ip} joined session {code} — engineer is {engineer_ip}")
     return jsonify({"engineer_ip": engineer_ip})
 

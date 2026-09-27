@@ -10,6 +10,9 @@ const RELAY = "http://localhost:5010";
 export default function SessionScreen({ onStart }) {
   const [rawCode, setRawCode] = useState(null);  // null=polling, ""=error, "XXXXXX"=found
   const [engineerIP, setEngineerIP] = useState("");
+  // Addresses the artist can type if discovery can't find this machine:
+  // [{kind: "tailscale"|"lan", ip}], Tailscale first.
+  const [addresses, setAddresses] = useState([]);
   const [creating, setCreating] = useState(false);
   const pollRef = useRef(null);
 
@@ -24,6 +27,7 @@ export default function SessionScreen({ onStart }) {
   const applySession = (data) => {
     setRawCode(data?.code ?? "");
     if (data?.engineer_ip) setEngineerIP(data.engineer_ip);
+    if (Array.isArray(data?.addresses)) setAddresses(data.addresses);
   };
 
   // Start a new session on the relay (it replaces the current one). The
@@ -117,10 +121,16 @@ export default function SessionScreen({ onStart }) {
         <p className="start-help">
           Give the artist this code — their Take app finds you on the network.
         </p>
-        {engineerIP && (
-          <p className="start-help start-addr">
-            If it can't, they can enter this address instead: <span className="start-ip">{engineerIP}</span>
-          </p>
+        {(addresses.length > 0 || engineerIP) && (
+          <div className="start-addrs">
+            <p className="start-help start-addr">If it can't, they can enter an address instead:</p>
+            {(addresses.length ? addresses : [{ kind: "lan", ip: engineerIP }]).map(a => (
+              <p key={a.ip} className="start-help start-addr">
+                {a.kind === "tailscale" ? "Over the internet (Tailscale)" : "On the same network"}{" "}
+                <span className="start-ip">{a.ip}</span>
+              </p>
+            ))}
+          </div>
         )}
 
         <div className="start-status">

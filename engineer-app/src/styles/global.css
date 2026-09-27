@@ -22,6 +22,7 @@ button:disabled{cursor:default}
 .start-help{margin:0;font-size:11px;line-height:1.5;color:#6b6b70;text-align:center;max-width:360px}
 .start-addr{font-size:10.5px;color:#4d4d52}
 .start-ip{color:#c4c4c8;user-select:text;-webkit-app-region:no-drag}
+.start-addrs{display:flex;flex-direction:column;align-items:center;gap:2px}
 .start-status{min-height:16px;font-size:10.5px;text-align:center}
 .start-foot{padding:14px 40px 24px;border-top:1px solid #1c1c1f}
 .start-btn{width:100%;height:36px;border-radius:8px;border:1px solid #4f8fff;background:#10203f;color:#4f8fff;font-size:12px;font-weight:500;-webkit-app-region:no-drag}
