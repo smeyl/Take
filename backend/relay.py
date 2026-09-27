@@ -458,9 +458,12 @@ def run_discovery_listener():
     try:
         sock.bind(("0.0.0.0", DISCOVERY_PORT))
     except OSError:
-        print(f"FATAL: discovery listener could not bind UDP {DISCOVERY_PORT} "
-              f"(lsof -i :{DISCOVERY_PORT}). Artists will have to enter the IP "
-              f"manually.", flush=True)
+        # Discovery is a convenience: without it the artist joins by typing
+        # this machine's address (shown on the engineer's start screen).
+        print(f"WARNING: LAN discovery is off — UDP {DISCOVERY_PORT} is in use "
+              f"(lsof -i :{DISCOVERY_PORT}). The artist's app won't find this "
+              f"machine by itself: give them its address, {get_local_ip()}, to "
+              f"enter on their join screen.", flush=True)
         return
     log(f"Discovery listener on UDP {DISCOVERY_PORT}")
     prefix = DISCOVERY_MAGIC + ":"
@@ -493,9 +496,10 @@ def run_discovery_listener():
 
 if __name__ == "__main__":
     import ports
+    # Only the relay's own port is required; discovery (UDP 5011) is optional
+    # and warns if it can't start (run_discovery_listener).
     ports.ensure_free([
-        (5010,           "tcp", "relay"),
-        (DISCOVERY_PORT, "udp", "discovery"),
+        (5010, "tcp", "relay"),
     ])
     threading.Thread(target=run_discovery_listener, name="discovery", daemon=True).start()
     log("Take relay server starting on port 5010")

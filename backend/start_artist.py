@@ -79,7 +79,12 @@ def run_heartbeat(relay_url, code, stop_evt, on_dead):
 
 
 def _read_session_file():
-    for _ in range(120):
+    """Wait — however long it takes — for the artist app to join a session
+    and write the session file (engineer IP + code). Joining can take a
+    while (finding the code, typing the engineer's address by hand), and the
+    backend is no use until it happens."""
+    waited = 0
+    while True:
         if os.path.exists(SESSION_FILE):
             try:
                 with open(SESSION_FILE) as f:
@@ -99,7 +104,10 @@ def _read_session_file():
             except Exception:
                 pass
         time.sleep(1)
-    return None, None
+        waited += 1
+        if waited % 60 == 0:
+            print(f"Still waiting for the artist app to join a session "
+                  f"({waited // 60} min)...", flush=True)
 
 
 def run_file_receiver():
@@ -126,14 +134,9 @@ if __name__ == "__main__":
     print("Waiting for session code from JUCE app...", flush=True)
     TARGET_IP, code = _read_session_file()
 
-    if TARGET_IP is None:
-        code = input("Enter session code: ")
-
-    # The relay lives on the engineer's machine. Resolution order:
-    # TAKE_RELAY_HOST env var → engineer IP from the session file → prompt.
+    # The relay lives on the engineer's machine: TAKE_RELAY_HOST if set,
+    # otherwise the engineer IP the artist app joined with.
     relay_host = os.environ.get("TAKE_RELAY_HOST") or TARGET_IP
-    if not relay_host:
-        relay_host = input("Enter engineer IP (blank for localhost): ").strip() or "127.0.0.1"
     RELAY_URL = f"http://{relay_host}:{RELAY_PORT}"
     print(f"Relay: {RELAY_URL}")
 

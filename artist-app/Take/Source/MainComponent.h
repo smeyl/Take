@@ -358,10 +358,14 @@ private:
 
             // 3. Normal HTTP join to the resolved relay host.
             juce::String body = "{\"code\":\"" + code + "\",\"ip\":\"" + ip + "\"}";
-            juce::String engineerIP;
-            int statusCode = 0;
-            const bool ok = rawHttpPost (relayHost.toRawUTF8(), 5010, "/session/join",
-                                         body, engineerIP, statusCode);
+            // TakeUI::http bounds the whole request, the connection included, to
+            // 5 s — a wrong address fails promptly instead of hanging ~75 s.
+            juce::String response;
+            const int statusCode = TakeUI::http (relayHost, 5010, "POST", "/session/join", 5000,
+                                                 &response, body);
+            const juce::String engineerIP = statusCode == 200
+                ? juce::JSON::parse (response)["engineer_ip"].toString() : juce::String();
+            const bool ok = engineerIP.isNotEmpty();
 
             juce::MessageManager::callAsync ([cb, safeThis, ok, statusCode,
                                               engineerIP, code]() mutable
@@ -454,73 +458,6 @@ private:
 
         ::close (fd);
         return false;
-    }
-
-    // POSIX HTTP POST - avoids juce::URL which fires internal assertions on connection failure.
-    static bool rawHttpPost (const char* host, int port, const char* path,
-                             const juce::String& jsonBody, juce::String& responseIP,
-                             int& statusCode)
-    {
-        statusCode = 0;
-
-        int fd = ::socket (AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) return false;
-
-        struct timeval tv { 5, 0 };
-        ::setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof (tv));
-        ::setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof (tv));
-
-        struct sockaddr_in addr {};
-        addr.sin_family = AF_INET;
-        addr.sin_port   = htons ((uint16_t) port);
-        ::inet_pton (AF_INET, host, &addr.sin_addr);
-
-        if (::connect (fd, (struct sockaddr*) &addr, sizeof (addr)) < 0)
-        {
-            ::close (fd);
-            return false;
-        }
-
-        const char* bodyPtr = jsonBody.toRawUTF8();
-        const int   bodyLen = (int) ::strlen (bodyPtr);
-
-        char header[512];
-        ::snprintf (header, sizeof (header),
-                    "POST %s HTTP/1.0\r\n"
-                    "Host: %s\r\n"
-                    "Content-Type: application/json\r\n"
-                    "Content-Length: %d\r\n"
-                    "Connection: close\r\n"
-                    "\r\n",
-                    path, host, bodyLen);
-        ::send (fd, header, ::strlen (header), 0);
-        ::send (fd, bodyPtr, (size_t) bodyLen, 0);
-
-        juce::MemoryBlock buf;
-        char    tmp[512];
-        ssize_t n;
-        while ((n = ::recv (fd, tmp, sizeof (tmp), 0)) > 0)
-            buf.append (tmp, (size_t) n);
-        ::close (fd);
-
-        if (buf.getSize() == 0) return false;
-
-        juce::String full = juce::String::fromUTF8 (static_cast<const char*> (buf.getData()), (int) buf.getSize());
-
-        // Status line: "HTTP/1.0 200 OK"
-        if (full.startsWith ("HTTP/"))
-            statusCode = full.fromFirstOccurrenceOf (" ", false, false)
-                             .upToFirstOccurrenceOf (" ", false, false).getIntValue();
-
-        int sep = full.indexOf ("\r\n\r\n");
-        if (sep < 0) return false;
-
-        juce::String body = full.substring (sep + 4).trim();
-        if (body.isEmpty()) return false;
-
-        auto json = juce::JSON::parse (body);
-        responseIP = json["engineer_ip"].toString();
-        return responseIP.isNotEmpty();
     }
 
     TakeLookAndFeel  laf;
