@@ -64,9 +64,10 @@ or changing a port, update PORTS.md in the same change.
   `artist-app/build_prebuilt.sh` and commit `artist-app/prebuilt/Take.app` with
   the source change. A fresh clone runs that committed app — artists don't
   have Xcode or JUCE — so a stale one ships old behaviour.
-- **Only source and the prebuilt artist app are committed.** Never commit
-  Xcode's `build/` folders, recordings, takes, logs or other generated
-  binaries. History was rewritten on 2026-09-27 to remove ~140 MB of exactly
+- **Only source, docs and the prebuilt artist app are committed.** Never
+  commit Xcode's `build/` folders, recordings, takes, logs or other generated
+  binaries. (The README's screenshots in `docs/screenshots/` are fine: keep
+  them small, and free of IP addresses or other personal details.) History was rewritten on 2026-09-27 to remove ~140 MB of exactly
   that (old Debug builds, test recordings); `artist-app/prebuilt/Take.app` is
   the one binary that belongs in git.
 - **Test changes before declaring them done, whenever possible.** Run the

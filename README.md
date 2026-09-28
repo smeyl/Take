@@ -21,6 +21,13 @@ Take supports **Pro Tools only**, on macOS. (It started out on Reaper; that vers
 - At the same time the **artist's Mac records the take losslessly**. When Pro Tools stops, that file is transferred back and swapped in on the armed track, at the exact position it belongs.
 - The two Macs talk directly: on the same network, or over the internet through **[Tailscale](https://tailscale.com)**, a free private network between your devices. Nothing goes through a Take server.
 
+<p align="center">
+  <img src="docs/screenshots/engineer.png" width="330" alt="The engineer app: session code, Pro Tools and artist connected, cue mix knobs, and a take that has just arrived">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/artist.png" width="347" alt="The artist app during a take: REC ring, input meter, backing track with playhead, cue mix">
+</p>
+<p align="center"><sub>Left: the engineer app, just after a take arrived. Right: the artist app, mid-take.</sub></p>
+
 ## Requirements
 
 **Both Macs**
@@ -190,7 +197,7 @@ Take/
 ├── artist-app/         Artist app (JUCE / C++). prebuilt/Take.app is the committed build a clone runs
 ├── engineer-app/       Engineer app (Electron + React + Vite)
 ├── backend/            Python services for both sides (relay, transport, streaming, file transfer, Pro Tools)
-├── docs/               artist-window.html: the artist app's design reference
+├── docs/               artist-window.html (the artist app's design reference), screenshots/
 ├── logs/               Runtime logs (git-ignored) and tail_logs.sh
 ├── recordings/         Artist's lossless takes (git-ignored)
 ├── incoming/           Takes the engineer has received (git-ignored)
