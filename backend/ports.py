@@ -9,10 +9,17 @@ import sys
 
 
 def _is_free(port, proto):
-    # No SO_REUSEADDR: the check must be exactly as strict as the real bind,
-    # otherwise it can claim a port is free that the service then fails to take.
+    # The check binds exactly as the real service will, so it's neither
+    # stricter nor looser. Every TCP service is a Flask app, whose server sets
+    # SO_REUSEADDR: that lets it bind over the TIME_WAIT sockets a stopped
+    # server leaves behind for ~30 s (closing connections its clients held
+    # open), while a port another process is listening on still fails. Without
+    # it here, restarting right after a stop was refused as a false conflict.
+    # The UDP services bind plainly (and UDP has no TIME_WAIT).
     kind = socket.SOCK_STREAM if proto == "tcp" else socket.SOCK_DGRAM
     with socket.socket(socket.AF_INET, kind) as s:
+        if proto == "tcp":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("0.0.0.0", port))
             return True
