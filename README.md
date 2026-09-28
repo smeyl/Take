@@ -4,6 +4,8 @@ Take lets a recording engineer and an artist in different places record together
 
 Take supports **Pro Tools only**, on macOS. (It started out on Reaper; that version is kept on the [`reaper`](https://github.com/smeyl/Take/tree/reaper) branch but is no longer maintained. See [Legacy: Reaper](#legacy-reaper).)
 
+> **Testing status.** Sessions on one local network are well tested. Internet sessions over Tailscale have been tried only by one person operating both Macs, on two different networks (a phone hotspot and a home connection), in a test run on 26–27 September 2026: recording, take transfer, the backing track and the live preview all worked, but the connection was a worst case and the live preview dropped out during congestion. A real session with two people in two locations hasn't happened yet, so treat internet sessions as experimental.
+
 ## How it works
 
 ```
@@ -74,6 +76,8 @@ Pro Tools' **H/W buffer size** (Setup ▸ Playback Engine) adds to what you hear
 
 On the same network (same Wi-Fi or office), skip this: the artist just types the session code.
 
+> Internet sessions are **experimental**: tested only by one person running both Macs across two networks, not yet by two people in two locations. See the testing status at the top.
+
 In different places, the two Macs connect over **Tailscale**. Tailscale builds a private, encrypted network between devices you choose. Take uses it only to reach the other Mac; nothing goes through Take or a Take server. The free plan is enough.
 
 Each person uses **their own Tailscale account**, and each **shares their Mac with the other**. Sharing has to go both ways: a Mac someone shares with you can only *answer* your connections, never start its own, and Take needs both Macs to reach each other.
@@ -138,7 +142,7 @@ Take only acts when a take arrives, and only on the track that was armed when re
 
 The artist's backing track plays slightly *ahead* of Pro Tools, by the whole round trip: network, both Macs' audio latencies, the engineer's stream buffer and Pro Tools' input latency. That way the artist's live voice reaches Pro Tools in time with the session. Take works this out each time playback starts and keeps it fixed until playback stops.
 
-To ride out network jitter, the live stream waits in a buffer on the engineer's Mac before it plays into Pro Tools: **40 ms** when the artist joined over the local network, **120 ms** over the internet. The size is chosen automatically when the artist joins.
+To ride out network jitter, the live stream waits in a buffer on the engineer's Mac before it plays into Pro Tools: **40 ms** when the artist joined over the local network, **120 ms** over the internet. The size is chosen automatically when the artist joins. The internet figure comes from measurements on the single internet test so far; other connections may need a different size (`TAKE_STREAM_BUFFER_MS`).
 
 The lossless take doesn't depend on any of this: it's placed sample-accurately from the artist's own recording.
 
@@ -168,6 +172,7 @@ Take works without any configuration. To change something, set these environment
 
 ## Known limitations
 
+- **Internet sessions are experimental.** Tested only by one person operating both Macs on two networks, not yet by two people in two locations (see the testing status at the top).
 - **Take doesn't press Record in Pro Tools.** The engineer does; Take follows.
 - **Pro Tools' scripting interface can't read the playhead.** Take works out positions from when the transport started. The backing-track sync doesn't follow loops, pre-roll, scrubbing or seeking while the transport rolls. Pro Tools also reports "playing" only to within about ±15–20 ms of when its audio starts, so what the engineer hears lines up to within that. Takes are unaffected: they're placed sample-accurately.
 - **Backing track:** the backend can bounce the session mix to MP3 and send it to the artist (bounce service on port 5006), but the engineer app has no button for it yet.
@@ -223,4 +228,12 @@ On `main`, `backend/reaper.py` and `backend/take_session.lua` remain only as a r
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 Arda Akıncı.
+Take's own code is released under the [MIT License](LICENSE). Copyright (c) 2026 Arda Akıncı.
+
+**Third-party licences.** Take is built on software under its own licences:
+
+- **JUCE 8** (the artist app) is dual-licensed under AGPLv3 and the [JUCE 8 licence](https://juce.com/legal/juce-8-licence/). The committed artist app is built under the JUCE licence. If you build or distribute the artist app yourself, you need either a JUCE licence of your own (the free Starter tier covers up to $20,000 a year in revenue) or to use JUCE under AGPLv3, which then applies to the app you distribute.
+- **[pedalboard](https://github.com/spotify/pedalboard)** (the artist's cue-mix effects) is **GPLv3**. Take doesn't include it; `setup.sh` installs it. If you distribute Take together with pedalboard, that bundle is subject to GPLv3.
+- **IBM Plex Mono** (the artist app's font) is under the [SIL Open Font License 1.1](artist-app/Take/Resources/Fonts/OFL.txt).
+- py-ptsl (BSD-3-Clause), Flask, flask-cors, requests, PyAudio, sounddevice, soundfile, watchdog, numpy, Electron and React are under permissive licences (BSD, MIT, Apache 2.0).
+- Pro Tools, PTSL and the Pro Tools Audio Bridge are Avid products and aren't part of Take.
