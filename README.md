@@ -190,7 +190,7 @@ Take/
 ├── artist-app/         Artist app (JUCE / C++). prebuilt/Take.app is the committed build a clone runs
 ├── engineer-app/       Engineer app (Electron + React + Vite)
 ├── backend/            Python services for both sides (relay, transport, streaming, file transfer, Pro Tools)
-├── docs/               artist-window.html (artist app design reference), original product spec (.docx)
+├── docs/               artist-window.html: the artist app's design reference
 ├── logs/               Runtime logs (git-ignored) and tail_logs.sh
 ├── recordings/         Artist's lossless takes (git-ignored)
 ├── incoming/           Takes the engineer has received (git-ignored)
