@@ -637,6 +637,63 @@ class ArtistScreen : public juce::Component
         }
     };
 
+    //==========================================================================
+    // A take the engineer's DAW recorded but this machine didn't capture (the
+    // relay's missed-take list, as the engineer app shows it). Dismissible.
+    class MissedBanner : public juce::Component
+    {
+    public:
+        std::function<void()> onDismiss;
+        juce::String title, why;
+
+        static constexpr float kPad = 10.0f, kX = 14.0f;
+
+        // The height this banner needs at `width` for its current text.
+        int heightFor (int width) const
+        {
+            return (int) std::ceil (kPad + 15.0f + 4.0f + whyLines (width) * 14.5f + kPad);
+        }
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat().reduced (0.5f);
+            g.setColour (Col (0xFF1F0F0F));
+            g.fillRoundedRectangle (b, 6.0f);
+            g.setColour (Col (0xFF5C2424));
+            g.drawRoundedRectangle (b, 6.0f, 1.0f);
+            const float textW = (float) getWidth() - 2.0f * kPad - kX - 6.0f;
+            TakeUI::text (g, title, TakeUI::font (11.0f, Weight::semibold), Col (0xFFF76464),
+                          { kPad, kPad, textW, 15.0f });
+            g.setFont (TakeUI::font (10.0f));
+            g.setColour (Col (0xFFC4A0A0));
+            g.drawFittedText (why, juce::Rectangle<float> (kPad, kPad + 19.0f, textW, (float) getHeight() - kPad * 2.0f - 19.0f).toNearestInt(),
+                              juce::Justification::topLeft, 4, 1.0f);
+            TakeUI::text (g, juce::String::fromUTF8 ("\xC3\x97"), TakeUI::font (14.0f), isMouseOver() ? Col (0xFFF76464) : Col (0xFF8A6A6A),
+                          closeBounds(), juce::Justification::centred);
+        }
+        void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit  (const juce::MouseEvent&) override { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (closeBounds().expanded (6.0f).contains (e.position) && onDismiss) onDismiss();
+        }
+
+    private:
+        juce::Rectangle<float> closeBounds() const { return { (float) getWidth() - kPad - kX, kPad - 1.0f, kX, 16.0f }; }
+        int whyLines (int width) const
+        {
+            // IBM Plex Mono: every character is 0.6 em wide.
+            const int perLine = juce::jmax (1, (int) (((float) width - 2.0f * kPad - kX - 6.0f) / (0.6f * 10.0f)));
+            int lines = 1, len = 0;
+            for (auto& word : juce::StringArray::fromTokens (why, " ", ""))
+            {
+                const int add = (len == 0 ? 0 : 1) + word.length();
+                if (len + add > perLine && len > 0) { ++lines; len = word.length(); }
+                else len += add;
+            }
+            return juce::jmin (lines, 4);
+        }
+    };
+
 public:
     //==========================================================================
     std::function<void()> onBack;
@@ -655,6 +712,9 @@ public:
             std::thread ([] { TakeUI::http ("127.0.0.1", 5004, "POST", "/session/leave", 2000); }).detach();
             if (onBack) onBack();
         };
+
+        addChildComponent (missed);
+        missed.onDismiss = [this] { hideMissed(); };
 
         juce::Component::SafePointer<ArtistScreen> safe (this);
 
@@ -727,9 +787,12 @@ public:
             const auto session = TakeUI::getJson (ip, 5010, "/session/" + code + "/status", 1500);
             const auto daw     = TakeUI::getJson (ip, 5010, "/reaper/status", 2500);
             const auto tracks  = TakeUI::getJson (ip, 5010, "/tracks", 2500);
-            juce::MessageManager::callAsync ([safe, session, daw, tracks]
+            const auto missed  = TakeUI::getJson (ip, 5010, "/takes/missed", 1500);
+            juce::MessageManager::callAsync ([safe, session, daw, tracks, missed]
             {
-                if (safe != nullptr) safe->applyRelay (session, daw, tracks);
+                if (safe == nullptr) return;
+                safe->applyRelay (session, daw, tracks);
+                safe->applyMissed (missed);
             });
         });
         markersPoller = std::make_unique<TakeUI::Poller> ("TakeMarkers", 5000, [safe, ip]
@@ -806,6 +869,9 @@ public:
         nowCard.setBounds (20, 427, w - 40, 24);
         cueMix.setBounds (20, 478, w - 40, 84);
         endButton.setBounds (20, getHeight() - 52, w - 40, 36);
+        // Over the record ring, under the connection rows: when a take was
+        // missed this machine isn't capturing, so the ring is idle.
+        missed.setBounds (20, 122, w - 40, missed.heightFor (w - 40));
     }
 
 private:
@@ -880,6 +946,8 @@ private:
             const int  cd   = (int) st["countdown"];
             const int  take = (int) st["take"];
             changed = changed || rec != capturing;
+            if (rec && ! capturing)
+                hideMissed();   // the take is being recorded again
             capturing = rec;
             // Before a take: the next take's number; during it: this one's.
             ring.take      = rec ? juce::jmax (1, take) : take + 1;
@@ -934,6 +1002,35 @@ private:
         repaint (0, 44, getWidth(), 71);
     }
 
+    // The relay's missed-take list: [{id, at, reason}], oldest first. Only
+    // takes missed after this artist joined are shown — the first reading
+    // sets the baseline — and only the newest one not yet dismissed.
+    void applyMissed (const juce::var& list)
+    {
+        if (! list.isArray()) return;
+        int newest = 0;
+        const juce::var* last = nullptr;
+        for (const auto& m : *list.getArray())
+            if ((int) m["id"] > newest) { newest = (int) m["id"]; last = &m; }
+        if (missedSeen < 0) { missedSeen = newest; return; }
+        if (last == nullptr || newest <= missedSeen || newest == missedShown) return;
+        missedShown = newest;
+        auto reason = (*last)["reason"].toString();
+        reason = reason.substring (0, 1).toUpperCase() + reason.substring (1);
+        missed.title = juce::String::fromUTF8 ("Take not captured \xC2\xB7 ") + (*last)["at"].toString();
+        missed.why   = reason + ". Only the live stream reached the engineer "
+                       + juce::String::fromUTF8 ("\xE2\x80\x94") + " it needs recording again.";
+        resized();
+        missed.setVisible (true);
+        missed.repaint();
+    }
+
+    void hideMissed()
+    {
+        if (missedShown > missedSeen) missedSeen = missedShown;
+        missed.setVisible (false);
+    }
+
     //==========================================================================
     juce::String sessionCode;
     juce::String relayHost { "127.0.0.1" }, relayCode;
@@ -949,6 +1046,8 @@ private:
     NowCard          nowCard;
     CueMixPanel      cueMix;
     EndSessionButton endButton;
+    MissedBanner     missed;
+    int missedSeen { -1 }, missedShown { 0 };   // missed-take ids: dismissed/baseline, on screen
 
     std::unique_ptr<TakeUI::Poller> localPoller, cuePoller, timecodePoller, relayPoller, markersPoller, heartbeat;
 
