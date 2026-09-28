@@ -13,9 +13,9 @@ from sender import send_file
 
 TARGET_IP = "127.0.0.1"  # set by start_engineer.py after artist joins
 BOUNCE_PORT = 5006
-# take_session.lua renders each bounce to a unique /tmp/session_BT_<ts>.mp3 (so
-# Reaper never raises an overwrite prompt) and reports the path in its done
-# signal. The artist side watches a fixed path, so we send under this name:
+# The DAW renders each bounce to its own file (daw.bounce_output_path(); a
+# fresh name each time, so no overwrite prompt). The artist side watches a
+# fixed path, so we send under this name:
 ARTIST_FILENAME = "take_backing_track.mp3"  # = backing_player.BACKING_PATH
 
 POLL_INTERVAL = 0.5  # seconds between checks
@@ -24,26 +24,25 @@ TIMEOUT       = 120  # seconds before giving up
 
 
 def wait_for_bounce():
-    """Wait for take_session.lua to signal the render finished, then confirm the
-    output file is present and its size has settled. Bounded by TIMEOUT so a
-    missing Reaper / Take script can never wedge the bounce. Returns the
+    """Wait for the DAW to signal the render finished, then confirm the output
+    file is present and its size has settled. Bounded by TIMEOUT so a DAW that
+    isn't running or never finishes can't wedge the bounce. Returns the
     rendered file's path on a complete render, None on timeout/missing output."""
     deadline = time.time() + TIMEOUT
 
-    # 1) Wait for the Lua completion signal — proof the render action actually
-    #    ran (vs. the command sitting unread because the script isn't running).
+    # 1) Wait for the DAW's completion signal — proof the render actually ran.
     while time.time() < deadline and not daw.bounce_signalled():
         time.sleep(POLL_INTERVAL)
     if not daw.bounce_signalled():
-        print(f"Bounce: no completion signal from take_session.lua within "
-              f"{TIMEOUT}s — is Reaper running with the Take script?")
+        print(f"Bounce: {daw.NAME} didn't finish the export within {TIMEOUT}s — "
+              f"is {daw.NAME} running with a session open?")
         return None
 
     # The signal file names the actual render output for this bounce.
     output = daw.bounce_output_path()
     if not output:
-        print("Bounce: done signal contained no output path — is take_session.lua "
-              "up to date? (restart Reaper after updating the Take scripts)")
+        print(f"Bounce: {daw.NAME}'s export failed — see the error above; nothing "
+              f"was sent to the artist.")
         return None
 
     # 2) Confirm the rendered file exists and has stopped growing. The render
@@ -61,8 +60,8 @@ def wait_for_bounce():
                 last_size, stable = size, 0
         time.sleep(POLL_INTERVAL)
 
-    print(f"Bounce: signalled done but {output} never appeared/settled — "
-          f"check the Reaper console for render errors.")
+    print(f"Bounce: {daw.NAME} reported the export done, but {output} never "
+          f"appeared or finished writing.")
     return None
 
 
@@ -136,7 +135,7 @@ def run_bounce_server():
 
 
 if __name__ == "__main__":
-    print("Bouncing project in Reaper (via take_session.lua)...")
+    print(f"Bouncing the {daw.NAME} session...")
     daw.start_bounce()
 
     print("Waiting for render...")

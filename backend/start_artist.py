@@ -123,7 +123,7 @@ def join(ip, code):
         loop_latency.reset()
         watcher.TARGET_IP = engineer_ip
         artist.TARGET_IP = engineer_ip
-        transport.RELAY_URL = relay_url  # Reaper record/stop commands route through the relay
+        transport.RELAY_URL = relay_url  # capture start/stop is reported to the DAW via the relay
         transport.STREAM_TO = engineer_ip
     # Tell the artist app the engineer's address (it pre-fills the manual
     # address field from this); marked as ours so it isn't taken as a join.

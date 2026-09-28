@@ -18,6 +18,9 @@ assets/*.icns
 assets/*.iconset
 
 
+# Xcode's per-user state (window layout, breakpoints, schemes list)
+xcuserdata/
+
 # Xcode build output of the artist app — never committed. The app a fresh
 # clone runs is artist-app/prebuilt/Take.app (refresh it: artist-app/build_prebuilt.sh).
 artist-app/Take/Builds/MacOSX/build/

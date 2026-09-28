@@ -368,15 +368,15 @@ def artist_proxy(endpoint):
         return jsonify({"error": f"artist unreachable: {e}"}), 502
 
 
-# ── Reaper transport ──────────────────────────────────────────────────────────
-# Reaper always runs on the engineer's machine (next to the relay). The artist's
-# transport calls these when recording starts/stops so the live BlackHole
-# recording in Reaper follows the artist's lossless local recording.
+# ── DAW transport ─────────────────────────────────────────────────────────────
+# The DAW (Pro Tools, via daw.py) runs on the engineer's machine, next to the
+# relay. The artist's transport reports here when its capture starts/stops.
+# The /reaper/* route names are historical (Take started on Reaper); both apps
+# call them by these names, so they're kept.
 
 @app.route("/track/select/<int:index>", methods=["POST"])
 def select_track(index):
-    """Remember the destination track. Reaper isn't touched until record time —
-    the record command arms this track as it starts rolling."""
+    """Remember the destination track. The DAW isn't touched until record time."""
     global selected_track
     selected_track = index
     try:
@@ -391,7 +391,8 @@ def select_track(index):
 
 @app.route("/reaper/record", methods=["POST"])
 def reaper_record():
-    # take_session.lua arms the selected track and starts the transport.
+    # The artist's capture began: the DAW records where it started (with Pro
+    # Tools, the engineer presses Record; Take follows it and places the take).
     # capture_pos: backing-track position (s) the artist heard as capture began.
     data = request.get_json(silent=True) or {}
     daw.start_recording(selected_track, capture_pos=data.get("capture_pos"))
@@ -492,9 +493,8 @@ def get_markers():
 
 @app.route("/reaper/status", methods=["GET"])
 def reaper_status():
-    # "Reachable" = take_session.lua is alive (fresh transport export). The old
-    # check pinged Reaper's web server root, which said OK even though every
-    # web API endpoint 404s — a green dot over a dead control path.
+    # "Reachable" = the DAW's control path answers (Pro Tools: PTSL is up with
+    # a session open) — not merely that the DAW application is running.
     return jsonify({"reachable": daw.alive(), "name": daw.NAME})
 
 

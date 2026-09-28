@@ -7,17 +7,19 @@ seems to require breaking one, stop and ask rather than working around it.
 ## Project summary
 
 Take is a remote recording session tool that lets an engineer and an artist
-collaborate from different locations. The engineer controls transport and cue
-mix from a web app (Electron + React); the artist monitors session state and
-meters in a native macOS app (JUCE / C++). Recording is captured losslessly on
-the artist's machine and the takes are transferred back to the engineer, with
-the engineer's DAW driving the actual capture. The Python `backend/` holds the
-services for both sides.
+collaborate from different locations. The engineer records in Pro Tools as
+usual — Take follows Pro Tools' Record/Stop, it never presses them — and sets
+the artist's cue mix and receives takes in a desktop app (Electron + React).
+The artist monitors session state and meters in a native macOS app (JUCE /
+C++). Each take is captured losslessly on the artist's machine and transferred
+back, then swapped into Pro Tools in place of the live-streamed preview. The
+Python `backend/` holds the services for both sides. README.md is the user
+guide (setup, Tailscale, Pro Tools routing); PORTS.md the port map.
 
 ## Locked architecture decisions
 
-- **Pro Tools is the target DAW.** `main` is moving to Pro Tools, controlled via
-  PTSL (the Pro Tools Scripting Library, gRPC). Reaper support was
+- **Pro Tools is the target DAW.** `main` supports Pro Tools only, controlled
+  via PTSL (the Pro Tools Scripting Library, gRPC). Reaper support was
   reference/legacy work and is preserved on the `reaper` branch; it is not the
   direction `main` is going.
 - **DAW-agnostic core behind `backend/daw.py`.** The rest of the backend imports
@@ -62,6 +64,11 @@ or changing a port, update PORTS.md in the same change.
   `artist-app/build_prebuilt.sh` and commit `artist-app/prebuilt/Take.app` with
   the source change. A fresh clone runs that committed app — artists don't
   have Xcode or JUCE — so a stale one ships old behaviour.
+- **Only source and the prebuilt artist app are committed.** Never commit
+  Xcode's `build/` folders, recordings, takes, logs or other generated
+  binaries. History was rewritten on 2026-09-27 to remove ~140 MB of exactly
+  that (old Debug builds, test recordings); `artist-app/prebuilt/Take.app` is
+  the one binary that belongs in git.
 - **Test changes before declaring them done, whenever possible.** Run the
   affected path (or at least the relevant script/build) and report the actual
   result. If you couldn't test something, say so plainly.
